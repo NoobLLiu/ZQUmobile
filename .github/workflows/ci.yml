@@ -32,6 +32,13 @@ jobs:
           channel: stable
           cache: true
 
+      # Flutter 新版模板会生成 :jni 模块（native_assets），AGP 构建时需要 CMake。
+      # 若不预装，AGP 会自行下载，且 runner 上 sdkmanager 偶发 Connection refused。
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ninja"
+
       - name: Pub get
         run: flutter pub get
 
@@ -62,3 +69,46 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/app/outputs/flutter-apk/掌上砚园.apk
+
+  # 网络抖动导致构建失败时自动重试（只重试构建本身）
+  build-apk-retry:
+    name: 重试构建 APK
+    needs: build-apk
+    if: failure()
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ninja"
+
+      - name: Build release APK (retry)
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: mv "build/app/outputs/flutter-apk/app-release.apk" "掌上砚园.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 掌上砚园
+          path: app/build/app/outputs/flutter-apk/掌上砚园.apk
+          if-no-files-found: error
+          retention-days: 90

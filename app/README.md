@@ -44,13 +44,30 @@ flutter pub get
 # 静态检查与测试
 flutter analyze
 flutter test
-
-# 构建
-flutter build apk --release
 ```
 
 > Windows 上若设置了 `http_proxy` / `https_proxy`，跑 `flutter test` 需额外设置
 > `NO_PROXY=localhost,127.0.0.1`，否则 `flutter_tester` 的本地 WebSocket 握手会被代理拦截。
+
+## 构建 APK（推荐走 CI）
+
+本项目通过 GitHub Actions 云端构建，产物是**单个 APK**（不套压缩包）：
+
+- 仓库：<https://github.com/NoobLLiu/ZQUmobile>
+- 触发：向 `main` 推送即自动构建，也可在 Actions 页手动触发
+- 流程：pub get → analyze → test → `flutter build apk --release`
+- 下载：Actions 页 → 对应 run → Artifacts → `掌上砚园.apk`
+
+打 tag 时还会把 APK 挂到 Releases 页面，可直接下载安装。
+
+> 本机构建 Gradle 依赖会因代理卡死，因此**不建议本地出包**，以 CI 为准。
+
+本地若确需构建：
+
+```bash
+flutter build apk --release
+# 输出：build/app/outputs/flutter-apk/app-release.apk
+```
 
 ## 目录结构
 
