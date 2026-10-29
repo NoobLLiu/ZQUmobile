@@ -190,4 +190,40 @@ void main() {
       );
     });
   });
+
+  group('parseBridgeMessage 通道消息分流', () {
+    test('progress 消息解析为进度', () {
+      final m = parseBridgeMessage('{"type":"progress","message":"正在读取课表 ..."}');
+      expect(m.isProgress, isTrue);
+      expect(m.message, '正在读取课表 ...');
+      expect(m.result, isNull);
+    });
+
+    test('result 成功消息带出课程数据', () {
+      final raw = '{"type":"result","ok":true,"term":"202601",'
+          '"termName":"2026-2027-1","semesterStartDate":"2026-08-31",'
+          '"totalWeeks":20,"courses":[{"name":"体育","teacher":"王","position":"操场",'
+          '"day":1,"startSection":1,"endSection":2,"weeks":[1]}]}';
+      final m = parseBridgeMessage(raw);
+      expect(m.isProgress, isFalse);
+      expect(m.isSuccess, isTrue);
+      expect(m.result!.courses.length, 1);
+      expect(m.result!.term, '202601');
+    });
+
+    test('result 失败消息带出错误原因', () {
+      final m = parseBridgeMessage('{"type":"result","ok":false,"error":"登录已失效"}');
+      expect(m.isProgress, isFalse);
+      expect(m.isSuccess, isFalse);
+      expect(m.error, '登录已失效');
+    });
+
+    test('缺少 type 的旧格式按 result 处理', () {
+      final raw = '{"ok":true,"courses":[{"name":"体育","teacher":"","position":"",'
+          '"day":1,"startSection":1,"endSection":1,"weeks":[1]}]}';
+      final m = parseBridgeMessage(raw);
+      expect(m.isProgress, isFalse);
+      expect(m.isSuccess, isTrue);
+    });
+  });
 }

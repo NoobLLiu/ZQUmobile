@@ -390,3 +390,69 @@ JwglFetchResult parseFetchPayload(String raw) {
         .toList(),
   );
 }
+
+/// 适配脚本回传的一条消息。
+///
+/// 脚本会回传两种消息（[type] 区分）：
+///   progress —— 进度提示，展示在页面状态栏；
+///   result   —— 最终结果，[result] 非空表示成功，否则 [error] 为失败原因。
+class JwglBridgeMessage {
+  const JwglBridgeMessage({
+    required this.type,
+    this.message,
+    this.result,
+    this.error,
+  });
+
+  /// 消息类型：progress / result。
+  final String type;
+
+  /// 进度文本。
+  final String? message;
+
+  /// 成功时的抓取结果。
+  final JwglFetchResult? result;
+
+  /// 失败原因。
+  final String? error;
+
+  bool get isProgress => type == 'progress';
+  bool get isSuccess => result != null;
+}
+
+/// 解析适配脚本回传的消息。
+///
+/// 兼容两种格式：
+///   {"type":"progress","message":"正在读取课表 ..."}
+///   {"type":"result","ok":true,"courses":[...], ...}
+/// 未带 type 的旧格式按 result 处理。
+JwglBridgeMessage parseBridgeMessage(String raw) {
+  Map<String, dynamic> j;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map<String, dynamic>) {
+      throw JwglException('回传消息格式异常：$raw');
+    }
+    j = decoded;
+  } on FormatException {
+    throw JwglException('回传消息解析失败：$raw');
+  }
+
+  final type = (j['type'] ?? 'result').toString();
+  if (type == 'progress') {
+    return JwglBridgeMessage(
+      type: 'progress',
+      message: (j['message'] ?? '').toString(),
+    );
+  }
+
+  // result：ok 为 false 时把 error 抛出，由调用方展示
+  if (j['ok'] != true) {
+    return JwglBridgeMessage(
+      type: 'result',
+      error: (j['error'] ?? '抓取失败').toString(),
+    );
+  }
+
+  return JwglBridgeMessage(type: 'result', result: parseFetchPayload(raw));
+}

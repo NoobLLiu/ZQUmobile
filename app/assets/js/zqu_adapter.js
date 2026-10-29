@@ -2,8 +2,10 @@
 //
 // 逻辑移植自拾光课表官方适配脚本
 //   shiguang_warehouse/resources/ZQU/zqu_01.js  (Apache-2.0)
-// 去掉了拾光专用的 window.shiguangBridge 调用，改为把结果 JSON 通过
-// window.flutterBridge.postMessage 回传给 Flutter 侧。
+//
+// 与拾光的差异：拾光通过 window.shiguangBridge 回调原生提示框，
+// 本 App 用更简单的单向通道 —— 把进度/结果 POST 给 window.zsyBridge，
+// 由 Flutter 侧统一展示（名称必须与 Dart 的 addJavaScriptChannel('zsyBridge') 一致）。
 //
 // 前置条件：用户已在 WebView 中登录教务系统，停留在教务系统任意页面即可。
 // 校外 WebVPN 与校内直连两种渠道都支持 —— 站点根由当前 URL 自动推导。
@@ -16,21 +18,36 @@
   // 课表数据接口（返回 JSON）
   var KB_DATA = 'xsgrkbcx!getKbRq.action';
 
-  // ---------------------------------------------------------------- 工具
+  // ---------------------------------------------------------------- 通道
 
+  /**
+   * 向 Flutter 回传消息。
+   * 通道不可用时把内容打到控制台，便于排查（不再静默吞掉）。
+   */
   function post(payload) {
+    var text = JSON.stringify(payload);
     try {
-      if (window.flutterBridge && window.flutterBridge.postMessage) {
-        window.flutterBridge.postMessage(JSON.stringify(payload));
+      if (window.zsyBridge && window.zsyBridge.postMessage) {
+        window.zsyBridge.postMessage(text);
+        return;
       }
     } catch (e) {
-      /* 桥接不可用时静默失败 */
+      /* 落到下面的控制台输出 */
     }
+    console.log('[zsy] ' + text);
   }
 
-  function fail(message) {
-    post({ ok: false, error: String(message) });
+  /** 进度提示。 */
+  function progress(message) {
+    post({ type: 'progress', message: String(message) });
   }
+
+  /** 失败上报。 */
+  function fail(message) {
+    post({ type: 'result', ok: false, error: String(message) });
+  }
+
+  // ---------------------------------------------------------------- 工具
 
   /**
    * 推算教务系统的站点根路径。
@@ -357,35 +374,32 @@
   // ---------------------------------------------------------------- 主流程
 
   async function runImportFlow() {
+    progress('正在读取学期列表 ...');
+
     var base = siteBase();
 
     var terms;
     try {
       terms = await fetchTermOptions(base);
     } catch (error) {
-      fail('读取学期失败：' + error.message);
+      fail('读取学期失败：' + error.message +
+        '\n请确认已登录教务系统，且当前停留在教务系统内的页面。');
       return;
     }
 
-    // 优先使用外部指定的学期，否则取下拉框当前值（教务默认当前学期）
-    var requestedTerm = window.__zquRequestedTerm;
+    // 取学期下拉框当前值（教务默认当前学期）
     var term = null;
-    if (requestedTerm) {
-      for (var i = 0; i < terms.opts.length; i++) {
-        if (terms.opts[i].value === requestedTerm) { term = terms.opts[i]; break; }
-      }
-    }
-    if (!term) {
-      for (var i = 0; i < terms.opts.length; i++) {
-        if (terms.opts[i].value === terms.cur) { term = terms.opts[i]; break; }
-      }
+    for (var i = 0; i < terms.opts.length; i++) {
+      if (terms.opts[i].value === terms.cur) { term = terms.opts[i]; break; }
     }
     if (!term) term = terms.opts[0];
     if (!term) { fail('未找到可用学期'); return; }
 
+    progress('正在读取「' + term.text + '」课表 ...');
+
     var records = await fetchTermData(base, term.value);
     if (!records) {
-      fail('课表接口未返回数据，请检查登录状态或稍后重试。');
+      fail('课表接口未返回数据。\n可能原因：登录已失效，或当前页面不在教务系统内。');
       return;
     }
 
@@ -395,9 +409,11 @@
       return;
     }
 
+    progress('正在确认开学日期 ...');
     var startDate = await fetchFirstWeekStart(base, term.value);
 
     post({
+      type: 'result',
       ok: true,
       term: term.value,
       termName: term.text,
@@ -408,5 +424,8 @@
     });
   }
 
-  runImportFlow();
+  // 兜住任何未预期的异常，避免「点了没反应」
+  runImportFlow().catch(function (e) {
+    fail('导入过程出错：' + (e && e.message ? e.message : e));
+  });
 })();

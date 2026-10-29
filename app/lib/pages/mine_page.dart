@@ -94,14 +94,8 @@ class MinePageState extends State<MinePage> {
           const _SectionTitle('教务账号'),
           _Tile(
             icon: Icons.login_outlined,
-            title: '教务系统登录状态',
+            title: '登录教务系统',
             subtitle: _loggedIn ? '已登录，可重新导入课表' : '未登录',
-            onTap: () => Navigator.of(context).pushNamed('/jwgl'),
-          ),
-          _Tile(
-            icon: Icons.refresh_outlined,
-            title: '重新导入课表',
-            subtitle: '回到教务系统抓取最新排课',
             onTap: () => Navigator.of(context).pushNamed('/jwgl'),
           ),
 
@@ -109,7 +103,7 @@ class MinePageState extends State<MinePage> {
           _Tile(
             icon: Icons.calendar_month_outlined,
             title: '查看我的课表',
-            subtitle: _tt == null ? '暂无课表数据' : '第 ${_tt!.totalWeeks} 周',
+            subtitle: _tt == null ? '暂无课表数据' : '共 ${_tt!.totalWeeks} 周',
             onTap: () => Navigator.of(context).pushNamed('/timetable'),
           ),
           _Tile(

@@ -9,10 +9,7 @@ import '../widgets/schedule_grid.dart';
 
 /// 课表页。
 class TimetablePage extends StatefulWidget {
-  const TimetablePage({super.key, this.onRefreshRequest});
-
-  /// 请求刷新（由外层注入，通常是跳转到教务登录页）。
-  final Future<bool> Function()? onRefreshRequest;
+  const TimetablePage({super.key});
 
   @override
   State<TimetablePage> createState() => _TimetablePageState();
@@ -21,7 +18,6 @@ class TimetablePage extends StatefulWidget {
 class _TimetablePageState extends State<TimetablePage> {
   Timetable? _tt;
   bool _loading = true;
-  String? _error;
   int _week = 1;
   bool _refreshing = false;
 
@@ -37,17 +33,16 @@ class _TimetablePageState extends State<TimetablePage> {
     setState(() {
       _tt = tt;
       _loading = false;
-      _error = tt == null ? '还没有课表数据，点击右上角登录教务系统导入' : null;
       _week = tt?.weekOf(DateTime.now()) ?? 1;
     });
   }
 
+  /// 重新同步：去教务系统导入一次，回来刷新。
   Future<void> _refresh() async {
-    if (widget.onRefreshRequest == null) return;
     setState(() => _refreshing = true);
     try {
-      final ok = await widget.onRefreshRequest!();
-      if (ok) await _load();
+      await Navigator.of(context).pushNamed('/jwgl');
+      if (mounted) await _load();
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -73,29 +68,31 @@ class _TimetablePageState extends State<TimetablePage> {
           ],
         ),
         actions: [
-          if (_refreshing)
-            const Padding(
-              padding: EdgeInsets.all(14),
-              child: SizedBox(
-                  width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
-            )
-          else
-            IconButton(
-              onPressed: _refresh,
-              icon: const Icon(Icons.refresh),
-              tooltip: '重新导入',
-            ),
+          // 有课表时提供「重新同步」；无数据时由页面中间的按钮引导去登录
+          if (tt != null)
+            if (_refreshing)
+              const Padding(
+                padding: EdgeInsets.all(14),
+                child: SizedBox(
+                    width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            else
+              IconButton(
+                onPressed: _refresh,
+                icon: const Icon(Icons.sync),
+                tooltip: '重新同步课表',
+              ),
         ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _EmptyState(message: _error!, onRetry: _load)
+          : tt == null
+              ? _EmptyState(onGoLogin: _goLogin)
               : Column(
                   children: [
                     _WeekSelector(
                       week: _week,
-                      totalWeeks: tt!.totalWeeks,
+                      totalWeeks: tt.totalWeeks,
                       onChanged: (w) => setState(() => _week = w),
                     ),
                     const Divider(height: 1),
@@ -112,6 +109,13 @@ class _TimetablePageState extends State<TimetablePage> {
                   ],
                 ),
     );
+  }
+
+  /// 去教务系统登录并同步课表，回来后自动刷新。
+  Future<void> _goLogin() async {
+    await Navigator.of(context).pushNamed('/jwgl');
+    if (!mounted) return;
+    await _load();
   }
 
   void _showDetail(Course course) {
@@ -202,15 +206,15 @@ class _WeekSelector extends StatelessWidget {
   }
 }
 
-/// 空状态。
+/// 空状态：本地没有课表数据时，引导用户去教务系统登录同步。
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.message, required this.onRetry});
+  const _EmptyState({required this.onGoLogin});
 
-  final String message;
-  final VoidCallback onRetry;
+  final VoidCallback onGoLogin;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -218,11 +222,29 @@ class _EmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.event_note_outlined,
-                size: 56, color: Theme.of(context).colorScheme.outline),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('重试')),
+                size: 64, color: theme.colorScheme.outline),
+            const SizedBox(height: 16),
+            Text(
+              '还没有课表数据',
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '请先登录教务系统，同步本学期课表',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onGoLogin,
+              icon: const Icon(Icons.login),
+              label: const Text('去登录教务系统'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(200, 46),
+              ),
+            ),
           ],
         ),
       ),

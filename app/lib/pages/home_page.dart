@@ -65,29 +65,15 @@ class HomePageState extends State<HomePage> {
     final features = <HomeFeature>[
       const HomeFeature(
         title: '我的课表',
-        subtitle: '周视图课程表，支持学期切换',
+        subtitle: '周视图课程表，支持周次切换',
         icon: Icons.calendar_month_outlined,
         route: '/timetable',
       ),
       const HomeFeature(
         title: '教务系统',
-        subtitle: '登录肇庆学院教务系统，导入课表数据',
+        subtitle: '登录肇庆学院教务系统，导入课表',
         icon: Icons.school_outlined,
         route: '/jwgl',
-      ),
-      HomeFeature(
-        title: '成绩查询',
-        subtitle: '即将上线',
-        icon: Icons.assignment_outlined,
-        route: '/soon',
-        enabled: false,
-      ),
-      HomeFeature(
-        title: '空教室查询',
-        subtitle: '即将上线',
-        icon: Icons.chair_outlined,
-        route: '/soon',
-        enabled: false,
       ),
     ];
 
@@ -189,8 +175,9 @@ class HomePageState extends State<HomePage> {
                         : '进入「教务系统」完成登录后可导入课表',
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).pushNamed('/jwgl');
+                  onTap: () async {
+                    await Navigator.of(context).pushNamed('/jwgl');
+                    if (mounted) _refreshState();
                   },
                 ),
               ),

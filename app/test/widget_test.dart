@@ -34,7 +34,7 @@ void main() {
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
 
-    expect(find.text('教务系统登录状态'), findsOneWidget);
+    expect(find.text('登录教务系统'), findsOneWidget);
     expect(find.text('查看我的课表'), findsOneWidget);
   });
 }
