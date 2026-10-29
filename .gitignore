@@ -11,3 +11,17 @@ __pycache__/
 *.pyc
 .next/
 coverage/
+
+# Flutter / Dart
+.dart_tool/
+.pub-cache/
+.pub/
+.flutter-plugins-dependencies
+**/doc/api/
+*.iml
+
+# WorkBuddy 运行数据
+.workbuddy/
+
+# 早期 Android 模板遗留（与「掌上肇院」Flutter 工程无关）
+helloworld/
