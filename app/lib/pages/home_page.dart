@@ -37,7 +37,6 @@ class HomePage extends StatefulWidget {
 
 /// 首页状态（对外暴露以便外部在登录返回后刷新）。
 class HomePageState extends State<HomePage> {
-  bool _loggedIn = false;
   bool _hasTimetable = false;
 
   @override
@@ -47,13 +46,9 @@ class HomePageState extends State<HomePage> {
   }
 
   Future<void> _refreshState() async {
-    final loggedIn = await TimetableRepository.isLoggedIn();
     final tt = await TimetableRepository.load();
     if (!mounted) return;
-    setState(() {
-      _loggedIn = loggedIn;
-      _hasTimetable = tt != null;
-    });
+    setState(() => _hasTimetable = tt != null);
   }
 
   /// 供外部在登录页返回后调用。
@@ -154,33 +149,6 @@ class HomePageState extends State<HomePage> {
                     ],
                   ),
                 ],
-              ),
-            ),
-          ),
-          // 登录状态提示
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            sliver: SliverToBoxAdapter(
-              child: Card(
-                child: ListTile(
-                  leading: Icon(
-                    _loggedIn ? Icons.verified_outlined : Icons.info_outline,
-                    color: _loggedIn
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.outline,
-                  ),
-                  title: Text(_loggedIn ? '教务系统已登录' : '教务系统未登录'),
-                  subtitle: Text(
-                    _loggedIn
-                        ? '进入「教务系统」可重新导入课表'
-                        : '进入「教务系统」完成登录后可导入课表',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    await Navigator.of(context).pushNamed('/jwgl');
-                    if (mounted) _refreshState();
-                  },
-                ),
               ),
             ),
           ),

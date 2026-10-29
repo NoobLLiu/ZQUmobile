@@ -1,18 +1,15 @@
 // ============================================================================
-// 以下为 shiguang_warehouse 上游 ZQU 适配脚本「原文」。
+// shiguang_warehouse 上游 ZQU 适配脚本「原文」（内置副本）。
 //
 // 来源：https://github.com/ShiGuangSchedule/shiguang_warehouse
 //       resources/ZQU/zqu_01.js   （Apache-2.0）
 //
-// 本仓库未修改其任何业务逻辑（取数、节次/周次解析、课程聚合、合并去重
-// 全部沿用官方实现）。为使官方脚本里的 window.shiguangBridge 调用可用，
-// 运行时会在其前面先注入 shiguang_bridge_shim.js。
-//
-// 唯一的结构性调整：整体包进 IIFE，避免重复点「执行导入」时
-// 顶层 const 重复声明报错（Identifier has already been declared）。
+// 本文件保持官方原样，不作任何业务修改。
+// 注入时由 App 在前面拼接桥接 shim，并用 IIFE 包裹（见 jwgl_adapter_repository）。
+// 应用内可「检查更新」从上游重新下载，覆盖为最新版本；
+// 下载失败或校验不通过时继续使用这份内置副本。
 // ============================================================================
 
-(function () {
 // 肇庆学院(zqu.edu.cn) 拾光课程表适配脚本
 // 教务系统：URP 系（Struts2，形如 xxx!yyy.action）
 // 适用范围：校外经 WebVPN 访问、或校内直连，两种渠道均支持。
@@ -548,5 +545,3 @@ async function runImportFlow() {
 }
 
 runImportFlow();
-
-})();

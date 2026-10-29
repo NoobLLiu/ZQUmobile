@@ -76,9 +76,10 @@ class ScheduleGrid extends StatelessWidget {
     final blocks = _buildBlocks(week, displayDays);
 
     return LayoutBuilder(builder: (context, constraints) {
-      // 每天列宽：尽量铺满可用宽度，列太多时最小 56
+      // 每天列宽：按可用宽度**精确等分**，保证整张表刚好铺满屏幕。
+      // 之前强制最小 56 会导致 7 列时总宽超出屏幕，周日被裁掉一半。
       final availW = constraints.maxWidth - leftW;
-      final colW = math.max(56.0, availW / displayDays);
+      final colW = math.max(38.0, availW / displayDays);
       final gridW = leftW + colW * displayDays;
       final gridH = maxSection * rowH;
 

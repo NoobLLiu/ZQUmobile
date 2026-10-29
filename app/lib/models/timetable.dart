@@ -243,3 +243,71 @@ class Timetable {
         if (fetchedAt != null) 'fetchedAt': fetchedAt,
       };
 }
+
+/// 一组互相冲突的课程（同一时段、且周次有交集）。
+///
+/// 「冲突」的判定：同一星期几 + 节次区间重叠 + 周次集合有交集。
+/// 只看节次重叠是不够的——两门课若是不同周次上课，实际上并不冲突。
+class CourseConflict {
+  CourseConflict(this.courses);
+
+  final List<Course> courses;
+
+  /// 冲突的星期几（1-7）。
+  int get day => courses.first.day;
+
+  /// 冲突的节次描述，如「1-2 节」。
+  String get sectionLabel {
+    final minStart = courses
+        .map((c) => c.startSection)
+        .reduce((a, b) => a < b ? a : b);
+    final maxEnd =
+        courses.map((c) => c.endSection).reduce((a, b) => a > b ? a : b);
+    return minStart == maxEnd ? '第 $minStart 节' : '第 $minStart-$maxEnd 节';
+  }
+}
+
+/// 找出课程列表里所有冲突组。
+///
+/// 返回的每个 [CourseConflict] 至少包含 2 门课，需要用户决定保留哪一门。
+List<CourseConflict> findCourseConflicts(List<Course> courses) {
+  final groups = <List<Course>>[];
+
+  for (final c in courses) {
+    // 找出与之冲突的所有已有分组
+    final hitIndexes = <int>[];
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].any((o) => _conflicts(c, o))) hitIndexes.add(i);
+    }
+
+    if (hitIndexes.isEmpty) {
+      groups.add([c]);
+      continue;
+    }
+
+    // 落到第一个命中的分组，并把其他命中的分组并进来
+    final target = groups[hitIndexes.first];
+    target.add(c);
+    for (var k = hitIndexes.length - 1; k >= 1; k--) {
+      target.addAll(groups.removeAt(hitIndexes[k]));
+    }
+  }
+
+  return groups
+      .where((g) => g.length > 1)
+      .map(CourseConflict.new)
+      .toList()
+    ..sort((a, b) => a.day.compareTo(b.day));
+}
+
+bool _conflicts(Course c1, Course c2) {
+  if (c1.day != c2.day) return false;
+  // 节次区间不重叠
+  if (c1.endSection < c2.startSection || c2.endSection < c1.startSection) {
+    return false;
+  }
+  // 周次无交集
+  final s1 = c1.weeks.toSet();
+  final s2 = c2.weeks.toSet();
+  return s1.intersection(s2).isNotEmpty;
+}

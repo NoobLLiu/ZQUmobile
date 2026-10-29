@@ -165,6 +165,43 @@ void main() {
     expect(find.text('周六'), findsOneWidget);
   });
 
+  group('findCourseConflicts 冲突检测', () {
+    Course c(String name, int day, int s, int e, List<int> weeks) => Course(
+          name: name,
+          teacher: '',
+          position: '',
+          day: day,
+          startSection: s,
+          endSection: e,
+          weeks: weeks,
+        );
+
+    test('节次重叠且周次有交集 → 判为冲突', () {
+      final conflicts = findCourseConflicts([
+        c('高等数学', 1, 1, 2, [1, 2, 3]),
+        c('大学物理', 1, 2, 3, [3, 4, 5]),
+      ]);
+      expect(conflicts.length, 1);
+      expect(conflicts.first.courses.length, 2);
+    });
+
+    test('节次重叠但周次无交集 → 不算冲突', () {
+      final conflicts = findCourseConflicts([
+        c('高等数学', 1, 1, 2, [1, 2]),
+        c('大学物理', 1, 1, 2, [5, 6]),
+      ]);
+      expect(conflicts, isEmpty);
+    });
+
+    test('不同星期几 → 不算冲突', () {
+      final conflicts = findCourseConflicts([
+        c('高等数学', 1, 1, 2, [1, 2, 3]),
+        c('大学物理', 2, 1, 2, [1, 2, 3]),
+      ]);
+      expect(conflicts, isEmpty);
+    });
+  });
+
   test('课表 JSON 往返不丢课程', () {
     final tt = Timetable(
       term: '202601',

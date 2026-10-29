@@ -16,13 +16,17 @@
 /// 按需求，**不实现验证码自动填写**。
 library;
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/timetable.dart';
+import '../services/jwgl_adapter_repository.dart';
 import '../services/jwgl_service.dart';
 import '../services/timetable_repository.dart';
+import '../widgets/conflict_dialog.dart';
 
 /// 教务登录与课表抓取页。
 class JwglLoginPage extends StatefulWidget {
@@ -49,6 +53,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   String _status = '请在下方网页中登录教务系统（验证码需自行输入）';
   String? _error;
 
+  /// 当前使用的适配脚本来源（内置 / 已更新），显示在底部引导里。
+  String _adapterLabel = '';
+
   /// 注入脚本后等待回传的令牌，用于兜底「点了没反应」。
   int _fetchToken = 0;
 
@@ -69,14 +76,17 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   }
 
   Future<void> _init() async {
-    final bundle = DefaultAssetBundle.of(context);
-    final shim = await bundle.loadString('assets/js/shiguang_bridge_shim.js');
-    final upstream = await bundle.loadString('assets/js/zqu_upstream.js');
+    // 脚本与本体解耦：优先用应用内下载的最新适配脚本，没有则用内置副本
+    final shim = await JwglAdapterRepository.loadShim();
+    final adapter = await JwglAdapterRepository.load();
     final sp = await SharedPreferences.getInstance();
     final entryUrl = sp.getString(_prefsKeyUrl) ?? defaultUrl;
     if (!mounted) return;
 
-    setState(() => _injectJs = '$shim\n$upstream');
+    setState(() {
+      _injectJs = JwglAdapterRepository.compose(shim, adapter.content);
+      _adapterLabel = adapter.sourceLabel;
+    });
 
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -159,6 +169,12 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       return;
     }
 
+    // 脚本需要用户输入（选学期 / 确认开学日期），弹窗后回填结果
+    if (msg.type == 'request') {
+      _handleRequest(msg);
+      return;
+    }
+
     // 官方脚本分段回传
     final j = msg.json;
     switch (msg.type) {
@@ -210,12 +226,130 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     }
   }
 
+  // ---------------------------------------------------- 脚本请求（弹窗交互）
+
+  /// 处理脚本发来的用户输入请求：选学期 / 确认开学日期。
+  Future<void> _handleRequest(JwglBridgeMessage msg) async {
+    final j = msg.json ?? const <String, dynamic>{};
+    final reqId = (j['requestId'] ?? '').toString();
+    final reqType = (j['requestType'] ?? '').toString();
+    final payload = (j['payload'] as Map<String, dynamic>?) ?? const {};
+
+    Object? value;
+
+    if (reqType == 'term') {
+      final items = ((payload['items'] as List?) ?? [])
+          .map((e) => e.toString())
+          .toList();
+      final def = (payload['defaultIndex'] as num?)?.toInt() ?? 0;
+      value = await _pickTerm(items, def);
+    } else if (reqType == 'startDate') {
+      final def = (payload['defaultText'] ?? '').toString();
+      value = await _pickStartDate(def);
+    }
+
+    await _resolveRequest(reqId, value);
+  }
+
+  /// 把用户选择回填给页面里的脚本。
+  Future<void> _resolveRequest(String reqId, Object? value) async {
+    final c = _controller;
+    if (c == null || reqId.isEmpty) return;
+    try {
+      await c.runJavaScript(
+        'window.__zsyResolve(${jsonEncode(reqId)}, ${jsonEncode(value)});',
+      );
+    } catch (_) {
+      /* 页面已跳走时忽略 */
+    }
+  }
+
+  /// 选学期弹窗，返回索引；取消返回 null。
+  Future<int?> _pickTerm(List<String> items, int defaultIndex) async {
+    if (items.isEmpty) return defaultIndex;
+    final picked = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        var selected = (defaultIndex >= 0 && defaultIndex < items.length)
+            ? defaultIndex
+            : 0;
+        return StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            title: const Text('选择学期'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: RadioGroup<int>(
+                groupValue: selected,
+                onChanged: (v) => setLocal(() => selected = v ?? selected),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: items.length,
+                  itemBuilder: (_, i) => RadioListTile<int>(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: i,
+                    title: Text(items[i]),
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(selected),
+                child: const Text('确定'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    return picked;
+  }
+
+  /// 确认开学日期，返回 yyyy-MM-dd；取消返回 null。
+  Future<String?> _pickStartDate(String defaultText) async {
+    DateTime initial;
+    try {
+      initial = DateTime.parse(defaultText);
+    } catch (_) {
+      initial = DateTime.now();
+    }
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(initial.year - 2),
+      lastDate: DateTime(initial.year + 2),
+      helpText: '选择本学期第 1 周的周一',
+      cancelText: '取消',
+      confirmText: '确定',
+    );
+    if (picked == null) return null;
+    return '${picked.year.toString().padLeft(4, '0')}-'
+        '${picked.month.toString().padLeft(2, '0')}-'
+        '${picked.day.toString().padLeft(2, '0')}';
+  }
+
   /// 官方脚本跑完（done）：把累积到的三段数据组装成课表并落库。
   Future<void> _finalize() async {
-    final courses = _accCourses;
+    var courses = _accCourses;
     if (courses == null || courses.isEmpty) {
       _fail('导入流程结束，但没有收到课程数据。\n请确认已登录教务系统，并停留在教务系统内的页面。');
       return;
+    }
+
+    // 同一时段有多门课时，让用户决定保留哪一门
+    final conflicts = findCourseConflicts(courses);
+    if (conflicts.isNotEmpty && mounted) {
+      setState(() => _fetching = true);
+      final resolved = await showConflictResolver(context, conflicts, courses);
+      if (resolved != null) courses = resolved;
+      if (!mounted) return;
     }
 
     // 总周数：优先用官方脚本给的配置，否则取课程里最大的周次
@@ -486,7 +620,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
           children: [
             Expanded(
               child: Text(
-                _fetching ? _status : '登录完成后，点击右侧导入课表',
+                _fetching
+                    ? _status
+                    : '登录完成后点击导入 · 脚本：$_adapterLabel',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

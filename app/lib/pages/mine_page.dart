@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../core/build_info.dart';
 import '../models/timetable.dart';
+import '../services/jwgl_adapter_repository.dart';
 import '../services/timetable_repository.dart';
 
 /// 我的页面。
@@ -18,7 +19,10 @@ class MinePage extends StatefulWidget {
 /// 我的页状态（对外暴露以便外部在登录返回后刷新）。
 class MinePageState extends State<MinePage> {
   Timetable? _tt;
-  bool _loggedIn = false;
+
+  /// 当前生效的适配脚本信息（内置 / 已更新）。
+  AdapterScript? _adapter;
+  bool _checkingAdapter = false;
 
   @override
   void initState() {
@@ -28,12 +32,45 @@ class MinePageState extends State<MinePage> {
 
   Future<void> _load() async {
     final tt = await TimetableRepository.load();
-    final loggedIn = await TimetableRepository.isLoggedIn();
+    final adapter = await JwglAdapterRepository.load();
     if (!mounted) return;
     setState(() {
       _tt = tt;
-      _loggedIn = loggedIn;
+      _adapter = adapter;
     });
+  }
+
+  /// 从拾光课表适配仓库下载最新脚本。
+  Future<void> _checkAdapter(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _checkingAdapter = true);
+    try {
+      final updated = await JwglAdapterRepository.checkUpdate();
+      if (!mounted) return;
+      setState(() => _adapter = updated);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('适配脚本已更新到最新版本')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('更新失败：$e')),
+      );
+    } finally {
+      if (mounted) setState(() => _checkingAdapter = false);
+    }
+  }
+
+  /// 恢复随应用发布的内置脚本。
+  Future<void> _resetAdapter(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await JwglAdapterRepository.resetToBundled();
+    final adapter = await JwglAdapterRepository.load();
+    if (!mounted) return;
+    setState(() => _adapter = adapter);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('已恢复内置脚本')),
+    );
   }
 
   /// 供外部在登录页返回后调用。
@@ -92,26 +129,34 @@ class MinePageState extends State<MinePage> {
             ),
           ),
 
-          const _SectionTitle('教务账号'),
-          _Tile(
-            icon: Icons.login_outlined,
-            title: '登录教务系统',
-            subtitle: _loggedIn ? '已登录，可重新导入课表' : '未登录',
-            onTap: () => Navigator.of(context).pushNamed('/jwgl'),
-          ),
-
           const _SectionTitle('课表数据'),
-          _Tile(
-            icon: Icons.calendar_month_outlined,
-            title: '查看我的课表',
-            subtitle: _tt == null ? '暂无课表数据' : '共 ${_tt!.totalWeeks} 周',
-            onTap: () => Navigator.of(context).pushNamed('/timetable'),
-          ),
           _Tile(
             icon: Icons.delete_outline,
             title: '清空课表缓存',
-            subtitle: '删除本地已保存的课表数据',
+            subtitle: _tt == null ? '暂无课表数据' : '已导入 ${_tt!.courses.length} 门课',
             onTap: () => _confirmClear(context),
+          ),
+
+          const _SectionTitle('教务适配脚本'),
+          _Tile(
+            icon: Icons.extension_outlined,
+            title: '适配脚本',
+            subtitle: _adapter == null
+                ? '读取中 ...'
+                : '${_adapter!.sourceLabel}'
+                    '${_adapter!.updatedAt == null ? '' : ' · ${_adapter!.updatedAt!.substring(0, 10)}'}',
+          ),
+          _Tile(
+            icon: Icons.cloud_download_outlined,
+            title: '检查脚本更新',
+            subtitle: _checkingAdapter ? '正在从拾光课表适配仓库下载 ...' : '从上游获取最新适配脚本',
+            onTap: _checkingAdapter ? null : () => _checkAdapter(context),
+          ),
+          _Tile(
+            icon: Icons.restore_outlined,
+            title: '恢复内置脚本',
+            subtitle: '丢弃已下载的脚本，回到随应用发布的版本',
+            onTap: () => _resetAdapter(context),
           ),
 
           const _SectionTitle('关于'),
