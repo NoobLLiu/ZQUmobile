@@ -39,10 +39,15 @@ jobs:
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           if [ -x "$SDKMANAGER" ]; then
             yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ninja" || true
-          else
-            echo "sdkmanager 不可用，跳过预装（AGP 会自行下载）"
+            # 分批安装：某个包不存在时不影响其他包（整批传会因一个失败而全部中止）
+            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0" || true
+            "$SDKMANAGER" "cmake;3.22.1" || true
           fi
+          # 兜底：系统 CMake（AGP 找不到 SDK 内的 3.22.1 时会回退到 PATH 中的 cmake）
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build
+          echo "--- cmake ---"; cmake --version | head -1
+          echo "--- ninja ---"; ninja --version
 
       - name: Pub get
         run: flutter pub get
@@ -104,10 +109,15 @@ jobs:
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           if [ -x "$SDKMANAGER" ]; then
             yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ninja" || true
-          else
-            echo "sdkmanager 不可用，跳过预装（AGP 会自行下载）"
+            # 分批安装：某个包不存在时不影响其他包（整批传会因一个失败而全部中止）
+            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0" || true
+            "$SDKMANAGER" "cmake;3.22.1" || true
           fi
+          # 兜底：系统 CMake（AGP 找不到 SDK 内的 3.22.1 时会回退到 PATH 中的 cmake）
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build
+          echo "--- cmake ---"; cmake --version | head -1
+          echo "--- ninja ---"; ninja --version
 
       - name: Build release APK (retry)
         run: flutter build apk --release
