@@ -21,7 +21,10 @@
 
 1. App 内嵌 WebView 打开教务登录页（校外走 WebVPN，校内可直连）；
 2. 用户自行完成登录（**图形验证码手动填写**，WebVPN 滑块人工拖动）；
-3. 登录后 App 向页面注入 `assets/js/zqu_adapter.js`，在教务系统会话内直接请求课表 JSON 接口：
+3. 登录后 App 向页面注入 **shiguang_warehouse 上游 ZQU 适配脚本原文**
+   （`assets/js/zqu_upstream.js`，Apache-2.0）＋ 一层桥接 shim
+   （`assets/js/shiguang_bridge_shim.js`，只把官方的弹窗/保存调用映射到 Flutter，
+   不改动任何取数与解析逻辑），在教务系统会话内直接请求课表 JSON 接口：
 
    ```
    GET {站点根}xsgrkbcx!getKbRq.action?xnxqdm=<学期>&zc=<周次>&xsdm=
@@ -30,7 +33,11 @@
    `zc` 传空表示不限周次，一次可取回整学期排课记录；每条记录自带 `zc` 字段标明上课周次，
    故无需逐周请求。
 
-4. 适配脚本把结果通过 `zsyBridge` 回传 Dart 侧，解析、聚合并落本地缓存。
+4. 官方脚本按「课程 → 学期配置 → 作息时间 → 完成」分四次回传，
+   App 逐段累积后一次性落本地缓存。
+
+> 脚本来源固定为上游仓库当前版本，升级适配只需替换 `assets/js/zqu_upstream.js`
+> （见该文件头部的来源与改动说明）。
 
 数据全程在设备本地处理，不经过任何第三方服务器，也不存储账号密码。
 
@@ -88,7 +95,9 @@ app/
 │   │   ├── timetable_page.dart   # 课表页
 │   │   └── jwgl_login_page.dart  # 教务系统 WebView 登录与导入
 │   └── widgets/schedule_grid.dart # 拾光风格课表网格
-├── assets/js/zqu_adapter.js      # 注入 WebView 的取数脚本
+├── assets/js/
+│   ├── zqu_upstream.js           # shiguang_warehouse 上游 ZQU 适配脚本（原文）
+│   └── shiguang_bridge_shim.js   # 把官方 bridge 调用映射到 Flutter 的适配层
 └── test/                         # 解析逻辑与界面冒烟测试
 ```
 

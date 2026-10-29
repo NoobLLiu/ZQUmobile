@@ -61,7 +61,7 @@ class _TimetablePageState extends State<TimetablePage> {
             const Text('课程表'),
             if (tt != null)
               Text(
-                tt.termName,
+                '${tt.termName} · 共 ${tt.courses.length} 门课',
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.outline),
               ),
@@ -96,6 +96,13 @@ class _TimetablePageState extends State<TimetablePage> {
                       onChanged: (w) => setState(() => _week = w),
                     ),
                     const Divider(height: 1),
+                    // 本周无课但学期内有课时给出提示，避免看着像“数据没导入”
+                    if (!_hasCourseInWeek(tt, _week) && tt.courses.isNotEmpty)
+                      _NoCourseHint(
+                        week: _week,
+                        total: tt.courses.length,
+                        range: _weeksRange(tt),
+                      ),
                     Expanded(
                       child: ScheduleGrid(
                         courses: tt.courses,
@@ -109,6 +116,28 @@ class _TimetablePageState extends State<TimetablePage> {
                   ],
                 ),
     );
+  }
+
+  /// 该周是否有课（含仅需灰化展示的课程）。
+  bool _hasCourseInWeek(Timetable tt, int week) {
+    for (final c in tt.courses) {
+      if (c.weeks.isEmpty || c.isActiveInWeek(week)) return true;
+    }
+    return false;
+  }
+
+  /// 课程覆盖的周次范围文本，如「1-18 周」。
+  String _weeksRange(Timetable tt) {
+    var min = 1 << 30;
+    var max = 0;
+    for (final c in tt.courses) {
+      for (final w in c.weeks) {
+        if (w < min) min = w;
+        if (w > max) max = w;
+      }
+    }
+    if (max == 0) return '—';
+    return '$min-$max 周';
   }
 
   /// 去教务系统登录并同步课表，回来后自动刷新。
@@ -247,6 +276,43 @@ class _EmptyState extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 本周无课提示条。
+class _NoCourseHint extends StatelessWidget {
+  const _NoCourseHint({
+    required this.week,
+    required this.total,
+    required this.range,
+  });
+
+  final int week;
+  final int total;
+  final String range;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline,
+              size: 16, color: theme.colorScheme.onSecondaryContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '第 $week 周没有课程排课 · 已导入 $total 门课（$range）',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSecondaryContainer),
+            ),
+          ),
+        ],
       ),
     );
   }

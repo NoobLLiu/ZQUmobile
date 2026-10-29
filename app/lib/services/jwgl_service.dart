@@ -393,39 +393,44 @@ JwglFetchResult parseFetchPayload(String raw) {
 
 /// 适配脚本回传的一条消息。
 ///
-/// 脚本会回传两种消息（[type] 区分）：
-///   progress —— 进度提示，展示在页面状态栏；
-///   result   —— 最终结果，[result] 非空表示成功，否则 [error] 为失败原因。
+/// 消息类型（[type]）：
+///   progress —— 进度提示；
+///   courses  —— 官方脚本 saveImportedCourses 回传的课程数组；
+///   config   —— 官方脚本 saveCourseConfig 回传的学期配置；
+///   slots    —— 官方脚本 savePresetTimeSlots 回传的作息时间；
+///   done     —— 官方脚本 notifyTaskCompletion，表示全部数据已就绪；
+///   result   —— 旧格式：一次性携带全部结果（兼容保留）。
 class JwglBridgeMessage {
   const JwglBridgeMessage({
     required this.type,
+    this.json,
     this.message,
     this.result,
     this.error,
   });
 
-  /// 消息类型：progress / result。
+  /// 消息类型。
   final String type;
+
+  /// 原始解析后的 JSON，供调用方按需取字段。
+  final Map<String, dynamic>? json;
 
   /// 进度文本。
   final String? message;
 
-  /// 成功时的抓取结果。
+  /// 旧格式一次性结果。
   final JwglFetchResult? result;
 
   /// 失败原因。
   final String? error;
 
   bool get isProgress => type == 'progress';
+  bool get isDone => type == 'done';
+  bool get isFailed => error != null;
   bool get isSuccess => result != null;
 }
 
 /// 解析适配脚本回传的消息。
-///
-/// 兼容两种格式：
-///   {"type":"progress","message":"正在读取课表 ..."}
-///   {"type":"result","ok":true,"courses":[...], ...}
-/// 未带 type 的旧格式按 result 处理。
 JwglBridgeMessage parseBridgeMessage(String raw) {
   Map<String, dynamic> j;
   try {
@@ -439,20 +444,31 @@ JwglBridgeMessage parseBridgeMessage(String raw) {
   }
 
   final type = (j['type'] ?? 'result').toString();
+
   if (type == 'progress') {
     return JwglBridgeMessage(
       type: 'progress',
+      json: j,
       message: (j['message'] ?? '').toString(),
     );
   }
 
-  // result：ok 为 false 时把 error 抛出，由调用方展示
-  if (j['ok'] != true) {
+  // result 且 ok=false 视为失败；其余类型原样交给调用方处理
+  if (type == 'result' && j['ok'] != true) {
     return JwglBridgeMessage(
       type: 'result',
+      json: j,
       error: (j['error'] ?? '抓取失败').toString(),
     );
   }
 
-  return JwglBridgeMessage(type: 'result', result: parseFetchPayload(raw));
+  if (type == 'result') {
+    return JwglBridgeMessage(
+      type: 'result',
+      json: j,
+      result: parseFetchPayload(raw),
+    );
+  }
+
+  return JwglBridgeMessage(type: type, json: j);
 }

@@ -1,12 +1,17 @@
 /// 教务系统登录页（内嵌 WebView）。
 ///
 /// 页面结构参照拾光课表的 WebViewScreen（Apache-2.0）：
-/// - 顶部只有标题 + 更多菜单（刷新 / 输入网址），不放任何常驻按钮，避免遮挡网页；
+/// - 顶部只有标题 + 更多菜单（刷新 / 输入网址），不放常驻按钮遮挡网页；
 /// - 底部一条操作栏：左侧引导文字，右侧「执行导入」按钮；
 /// - 加载进度以细进度条浮在 WebView 顶部。
 ///
-/// 登录流程：用户在网页里自己完成登录（图形验证码、SSO、WebVPN 滑块全部人工），
-/// 登录后点「执行导入」，App 注入 assets/js/zqu_adapter.js 取整学期课表。
+/// 取数逻辑**直接使用 shiguang_warehouse 上游的 ZQU 适配脚本原文**
+/// （assets/js/zqu_upstream.js），本 App 只提供一个桥接 shim
+/// （assets/js/shiguang_bridge_shim.js）把它的 showAlert / saveImportedCourses
+/// 等调用映射到 Flutter。
+///
+/// 官方脚本按「课程 → 学期配置 → 作息时间 → 完成」分四次回传，
+/// 这里逐段累积，收到 done 后一次性组装并落库，任何一段都不会丢。
 ///
 /// 按需求，**不实现验证码自动填写**。
 library;
@@ -29,7 +34,9 @@ class JwglLoginPage extends StatefulWidget {
 
 class _JwglLoginPageState extends State<JwglLoginPage> {
   WebViewController? _controller;
-  String? _adapterJs;
+
+  /// 注入脚本 = 桥接 shim + 上游适配脚本。
+  String? _injectJs;
 
   /// 默认打开教务系统首页（校内可直连；校外可在菜单里改成 WebVPN 地址）。
   static const String defaultUrl = 'https://jwgl.zqu.edu.cn/';
@@ -42,8 +49,17 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   String _status = '请在下方网页中登录教务系统（验证码需自行输入）';
   String? _error;
 
-  /// 注入脚本后等待回传的计时器，用于兜底“点了没反应”。
+  /// 注入脚本后等待回传的令牌，用于兜底「点了没反应」。
   int _fetchToken = 0;
+
+  // ---- 官方脚本分段落库的累积区 ----
+  List<Course>? _accCourses;
+  List<TimeSlot>? _accSlots;
+  int _accTotalWeeks = 0;
+  String _accStartDate = '';
+
+  /// 「执行导入」是否可用（拿到脚本后才可用）。
+  bool get _ready => _controller != null && _injectJs != null;
 
   @override
   void initState() {
@@ -52,12 +68,14 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   }
 
   Future<void> _init() async {
-    final js = await DefaultAssetBundle.of(context)
-        .loadString('assets/js/zqu_adapter.js');
+    final bundle = DefaultAssetBundle.of(context);
+    final shim = await bundle.loadString('assets/js/shiguang_bridge_shim.js');
+    final upstream = await bundle.loadString('assets/js/zqu_upstream.js');
     final sp = await SharedPreferences.getInstance();
     final entryUrl = sp.getString(_prefsKeyUrl) ?? defaultUrl;
     if (!mounted) return;
-    setState(() => _adapterJs = js);
+
+    setState(() => _injectJs = '$shim\n$upstream');
 
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -81,7 +99,6 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
           onPageFinished: (url) {
             if (!mounted) return;
             setState(() => _loadingPage = false);
-            // 页面标题同步到 AppBar，便于用户确认自己在哪一层
             _controller?.getTitle().then((t) {
               if (!mounted || t == null || t.isEmpty) return;
               setState(() => _pageTitle = t);
@@ -95,7 +112,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
           },
         ),
       )
-      // 通道名必须与 assets/js/zqu_adapter.js 里的 window.zsyBridge 一致
+      // 通道名必须与 shim 里的 window.zsyBridge 一致
       ..addJavaScriptChannel(
         'zsyBridge',
         onMessageReceived: (message) => _onBridgeMessage(message.message),
@@ -108,35 +125,144 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
   // ------------------------------------------------------------------ 回传处理
 
+  void _fail(String message) {
+    if (!mounted) return;
+    setState(() {
+      _fetching = false;
+      _error = message;
+      _status = '导入失败';
+    });
+  }
+
   void _onBridgeMessage(String raw) {
     if (!mounted) return;
+
+    final JwglBridgeMessage msg;
     try {
-      final msg = parseBridgeMessage(raw);
-      if (msg.isProgress) {
-        setState(() {
-          _status = msg.message ?? _status;
-          _error = null;
-        });
-        return;
-      }
-      if (msg.isSuccess) {
-        _saveResult(msg.result!);
-      } else {
-        setState(() {
-          _fetching = false;
-          _error = msg.error ?? '导入失败';
-          _status = '导入失败';
-        });
-      }
+      msg = parseBridgeMessage(raw);
     } on JwglException catch (e) {
+      _fail(e.message);
+      return;
+    }
+
+    if (msg.isProgress) {
       setState(() {
-        _fetching = false;
-        _error = e.message;
-        _status = '导入失败';
+        _status = msg.message ?? _status;
+        _error = null;
       });
+      return;
+    }
+
+    if (msg.isFailed) {
+      _fail(msg.error ?? '导入失败');
+      return;
+    }
+
+    // 官方脚本分段回传
+    final j = msg.json;
+    switch (msg.type) {
+      case 'courses':
+        final list = ((j?['courses'] as List?) ?? [])
+            .whereType<Map<String, dynamic>>()
+            .map(Course.fromJson)
+            .toList();
+        if (list.isEmpty) {
+          _fail('未获取到课表数据，请确认该学期已选课。');
+          return;
+        }
+        _accCourses = list;
+        setState(() => _status = '已获取 ${list.length} 门课程，正在读取学期信息 ...');
+        return;
+
+      case 'config':
+        final cfg = (j?['config'] as Map<String, dynamic>?) ?? const {};
+        _accTotalWeeks = (cfg['semesterTotalWeeks'] as num?)?.toInt() ?? 0;
+        _accStartDate = (cfg['semesterStartDate'] ?? '').toString();
+        setState(() => _status = '正在写入作息时间 ...');
+        return;
+
+      case 'slots':
+        final list = ((j?['slots'] as List?) ?? [])
+            .whereType<Map<String, dynamic>>()
+            .map(TimeSlot.fromJson)
+            .toList();
+        if (list.isNotEmpty) _accSlots = list;
+        return;
+
+      case 'done':
+        _finalize();
+        return;
+
+      case 'result':
+        // 旧格式一次性结果，兼容保留
+        if (msg.isSuccess) {
+          _saveResult(msg.result!);
+        }
+        return;
     }
   }
 
+  /// 官方脚本跑完（done）：把累积到的三段数据组装成课表并落库。
+  Future<void> _finalize() async {
+    final courses = _accCourses;
+    if (courses == null || courses.isEmpty) {
+      _fail('导入流程结束，但没有收到课程数据。\n请确认已登录教务系统，并停留在教务系统内的页面。');
+      return;
+    }
+
+    // 总周数：优先用官方脚本给的配置，否则取课程里最大的周次
+    var totalWeeks = _accTotalWeeks;
+    if (totalWeeks <= 0) {
+      for (final c in courses) {
+        for (final w in c.weeks) {
+          if (w > totalWeeks) totalWeeks = w;
+        }
+      }
+    }
+    if (totalWeeks <= 0) totalWeeks = 20;
+
+    // 开学日期：官方脚本没给就退回本周周一，保证周次至少能算
+    var startDate = _accStartDate;
+    if (startDate.isEmpty) {
+      final now = DateTime.now();
+      final monday = now.subtract(Duration(days: now.weekday - 1));
+      startDate = '${monday.year.toString().padLeft(4, '0')}-'
+          '${monday.month.toString().padLeft(2, '0')}-'
+          '${monday.day.toString().padLeft(2, '0')}';
+    }
+
+    final slots = _accSlots ??
+        kPresetTimeSlots.map((e) => TimeSlot.fromJson(e)).toList();
+
+    final tt = Timetable(
+      term: '',
+      termName: _pageTitle,
+      totalWeeks: totalWeeks,
+      semesterStartDate: startDate,
+      courses: courses,
+      timeSlots: slots,
+      fetchedAt: DateTime.now().toIso8601String(),
+    );
+
+    await TimetableRepository.save(tt);
+    await TimetableRepository.setLoggedIn(true);
+    if (!mounted) return;
+
+    setState(() {
+      _fetching = false;
+      _status = '导入成功，共 ${tt.courses.length} 门课程';
+      _accCourses = null;
+      _accSlots = null;
+      _accTotalWeeks = 0;
+      _accStartDate = '';
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('课表导入成功，共 ${tt.courses.length} 门课程')),
+    );
+    Navigator.of(context).pop(true);
+  }
+
+  /// 兼容旧格式：一次性结果直接落库。
   Future<void> _saveResult(JwglFetchResult result) async {
     final slots = result.timeSlots.isNotEmpty
         ? result.timeSlots
@@ -168,13 +294,18 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
   // ------------------------------------------------------------------ 导入
 
-  /// 点「执行导入」：注入适配脚本。
+  /// 点「执行导入」：注入桥接 shim + 上游适配脚本。
   Future<void> _startImport() async {
     final controller = _controller;
-    final js = _adapterJs;
+    final js = _injectJs;
     if (controller == null || js == null || _fetching) return;
 
     final token = ++_fetchToken;
+    _accCourses = null;
+    _accSlots = null;
+    _accTotalWeeks = 0;
+    _accStartDate = '';
+
     setState(() {
       _fetching = true;
       _error = null;
@@ -185,23 +316,15 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       await controller.runJavaScript(js);
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _fetching = false;
-        _error = '脚本注入失败：$e';
-        _status = '导入失败';
-      });
+      _fail('脚本注入失败：$e');
       return;
     }
 
-    // 兜底：15 秒内没有任何回传，说明脚本没跑起来（例如页面还没登录）
-    await Future.delayed(const Duration(seconds: 15));
+    // 兜底：20 秒内没有任何回传，说明脚本没跑起来
+    await Future.delayed(const Duration(seconds: 20));
     if (!mounted || token != _fetchToken || !_fetching) return;
-    setState(() {
-      _fetching = false;
-      _error = '没有收到教务系统的响应。\n请确认：① 已登录教务系统；'
-          '② 当前停留在教务系统内的页面（不是 WebVPN 首页）。';
-      _status = '导入超时';
-    });
+    _fail('没有收到教务系统的响应。\n请确认：① 已登录教务系统；'
+        '② 当前停留在教务系统内的页面（不是 WebVPN 首页）。');
   }
 
   Future<void> _reload() => _controller?.reload() ?? Future.value();
@@ -292,7 +415,6 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       ),
       body: Column(
         children: [
-          // 失败提示（成功时完全隐藏，不占空间）
           if (_error != null)
             Material(
               color: theme.colorScheme.errorContainer,
@@ -330,7 +452,6 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
                   const Center(child: CircularProgressIndicator())
                 else
                   WebViewWidget(controller: controller),
-                // 进度条浮在网页顶部，不挤压内容
                 if (_loadingPage)
                   Positioned(
                     top: 0,
@@ -347,7 +468,6 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
           ),
         ],
       ),
-      // 底部操作栏：左侧引导 + 右侧导入（照拾光的 BottomAppBar 布局）
       bottomNavigationBar: BottomAppBar(
         height: 72,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -365,7 +485,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
             ),
             const SizedBox(width: 12),
             FilledButton(
-              onPressed: _fetching ? null : _startImport,
+              onPressed: (!_ready || _fetching) ? null : _startImport,
               child: _fetching
                   ? const SizedBox(
                       width: 18,

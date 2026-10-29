@@ -175,11 +175,22 @@ class ScheduleGrid extends StatelessWidget {
     final demoted = <Course>[];
 
     for (final c in courses) {
+      // 坐标非法会导致块被画到网格外（看起来就像“课程消失”），先剔除
+      if (c.day < 1 || c.day > 7) continue;
+      if (c.startSection < 1) continue;
+      final end = c.endSection < c.startSection ? c.startSection : c.endSection;
+
+      // 周次为空的课程无法判断属于哪一周，按“本学期有效”处理，
+      // 否则既不算本周有课、也不算非本周，会整条凭空消失
+      if (c.weeks.isEmpty) {
+        active.add(c.copyWith(endSection: end));
+        continue;
+      }
+
       if (c.isActiveInWeek(week)) {
-        active.add(c);
-      } else if (c.weeks.isNotEmpty) {
-        // 该课在本学期内开课，但本周不上 → 灰化展示
-        demoted.add(c);
+        active.add(c.copyWith(endSection: end));
+      } else {
+        demoted.add(c.copyWith(endSection: end));
       }
     }
 
