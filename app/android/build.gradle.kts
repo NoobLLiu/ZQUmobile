@@ -1,8 +1,5 @@
 allprojects {
     repositories {
-        // 优先国内镜像，避免走本机代理时 dl.google.com / maven central 卡死
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
         google()
         mavenCentral()
     }

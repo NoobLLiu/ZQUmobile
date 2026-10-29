@@ -13,14 +13,21 @@ concurrency:
 jobs:
   build-apk:
     name: 构建 APK
-    runs-on: ubuntu-latest
+    # 与 ZQUHelper 保持一致：windows-latest 的 Android SDK 镜像已预装 CMake，
+    # AGP 构建 :jni 模块时可直接找到，无需联网下载（ubuntu runner 会缺 CMake 而失败）。
+    runs-on: windows-latest
     defaults:
       run:
         working-directory: app
+    env:
+      # Pub 缓存默认在 C:，工程 checkout 在 D:，
+      # Kotlin 增量编译跨盘根算相对路径会崩（different roots），
+      # 把缓存挪到与工程同一盘符。
+      PUB_CACHE: ${{ github.workspace }}\.pub-cache
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Java 17
+      - name: Setup Java (for Android build)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -32,22 +39,9 @@ jobs:
           channel: stable
           cache: true
 
-      # Flutter 新版模板会生成 :jni 模块（native_assets），AGP 构建时需要 CMake。
-      # 若不预装，AGP 会自行下载，且 runner 上 sdkmanager 偶发 Connection refused。
-      - name: Install Android SDK packages
-        run: |
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [ -x "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-            # 分批安装：某个包不存在时不影响其他包（整批传会因一个失败而全部中止）
-            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0" || true
-            "$SDKMANAGER" "cmake;3.22.1" || true
-          fi
-          # 兜底：系统 CMake（AGP 找不到 SDK 内的 3.22.1 时会回退到 PATH 中的 cmake）
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build
-          echo "--- cmake ---"; cmake --version | head -1
-          echo "--- ninja ---"; ninja --version
+      # 双保险：关掉 Kotlin 增量编译，避免跨盘根缓存问题
+      - name: Disable Kotlin incremental compilation
+        run: Add-Content -Path android/gradle.properties -Value "`nkotlin.incremental=false"
 
       - name: Pub get
         run: flutter pub get
@@ -63,7 +57,8 @@ jobs:
 
       # 产物就是单个 apk，不套压缩包
       - name: Rename APK
-        run: mv "build/app/outputs/flutter-apk/app-release.apk" "掌上砚园.apk"
+        shell: pwsh
+        run: Move-Item "build/app/outputs/flutter-apk/app-release.apk" "build/app/outputs/flutter-apk/掌上砚园.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -73,62 +68,9 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # 打 tag 时同时挂到 Release，方便直接下载安装
+      # 打 tag 时同时挂到 Release，可直接下载安装
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/app/outputs/flutter-apk/掌上砚园.apk
-
-  # 网络抖动导致构建失败时自动重试（只重试构建本身）
-  build-apk-retry:
-    name: 重试构建 APK
-    needs: build-apk
-    if: failure()
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Install Android SDK packages
-        run: |
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [ -x "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-            # 分批安装：某个包不存在时不影响其他包（整批传会因一个失败而全部中止）
-            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0" || true
-            "$SDKMANAGER" "cmake;3.22.1" || true
-          fi
-          # 兜底：系统 CMake（AGP 找不到 SDK 内的 3.22.1 时会回退到 PATH 中的 cmake）
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build
-          echo "--- cmake ---"; cmake --version | head -1
-          echo "--- ninja ---"; ninja --version
-
-      - name: Build release APK (retry)
-        run: flutter build apk --release
-
-      - name: Rename APK
-        run: mv "build/app/outputs/flutter-apk/app-release.apk" "掌上砚园.apk"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: 掌上砚园
-          path: app/build/app/outputs/flutter-apk/掌上砚园.apk
-          if-no-files-found: error
-          retention-days: 90
