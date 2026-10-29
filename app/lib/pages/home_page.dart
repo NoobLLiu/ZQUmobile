@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../core/build_info.dart';
 import '../services/timetable_repository.dart';
 
 /// 一个可从首页进入的功能。
@@ -109,7 +110,7 @@ class HomePageState extends State<HomePage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            '肇庆学院校园助手',
+                            '肇庆学院校园助手 · v${BuildInfo.version}',
                             style: theme.textTheme.titleMedium?.copyWith(
                               color: Colors.white.withValues(alpha: 0.9),
                               fontWeight: FontWeight.w500,

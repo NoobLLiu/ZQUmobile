@@ -10,6 +10,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     name: 构建 APK
@@ -43,6 +46,18 @@ jobs:
       - name: Disable Kotlin incremental compilation
         run: Add-Content -Path android/gradle.properties -Value "`nkotlin.incremental=false"
 
+      # 版本号从 pubspec.yaml 读，避免 CI 与工程里写两份
+      - name: Read version
+        id: ver
+        shell: bash
+        run: |
+          LINE=$(grep '^version:' pubspec.yaml)
+          VERSION=$(echo "$LINE" | sed 's/version: *//' | cut -d'+' -f1 | tr -d '[:space:]')
+          BUILD=$(echo "$LINE" | sed 's/.*+//' | tr -d '[:space:]')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "构建版本：$VERSION ($BUILD)"
+
       - name: Pub get
         run: flutter pub get
 
@@ -52,25 +67,46 @@ jobs:
       - name: Test
         run: flutter test
 
+      # 版本/提交号注入到 App 内，界面上可直接看到「这是哪一版」
       - name: Build release APK
-        run: flutter build apk --release
+        shell: bash
+        run: |
+          flutter build apk --release \
+            --dart-define=APP_VERSION=${{ steps.ver.outputs.version }} \
+            --dart-define=APP_BUILD_NUMBER=${{ steps.ver.outputs.build }} \
+            --dart-define=GIT_SHA=${{ github.sha }} \
+            --dart-define=BUILD_TIME=$(date -u +%Y-%m-%dT%H:%MZ)
 
-      # 产物就是单个 apk，不套压缩包
+      # 产物就是单个 apk，不套压缩包；文件名带版本号，避免与旧包混淆
       - name: Rename APK
-        shell: pwsh
-        run: Move-Item "build/app/outputs/flutter-apk/app-release.apk" "build/app/outputs/flutter-apk/掌上砚园.apk"
+        shell: bash
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             "build/app/outputs/flutter-apk/掌上砚园-${{ steps.ver.outputs.version }}.apk"
+          ls -lh build/app/outputs/flutter-apk/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: 掌上砚园
-          path: app/build/app/outputs/flutter-apk/掌上砚园.apk
+          name: 掌上砚园-${{ steps.ver.outputs.version }}
+          path: app/build/app/outputs/flutter-apk/掌上砚园-${{ steps.ver.outputs.version }}.apk
           if-no-files-found: error
           retention-days: 90
 
-      # 打 tag 时同时挂到 Release，可直接下载安装
-      - name: Publish to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: app/build/app/outputs/flutter-apk/掌上砚园.apk
+      # 每次 main 构建都更新「latest」Release：
+      # 给出可直接下载的 .apk 直链（不是 zip），且文件名带版本号，不会被旧包顶掉。
+      - name: Publish to Release (latest)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK="build/app/outputs/flutter-apk/掌上砚园-${{ steps.ver.outputs.version }}.apk"
+          if ! gh release view latest > /dev/null 2>&1; then
+            gh release create latest \
+              --title "最新构建" \
+              --notes "由 CI 自动构建，每次提交更新。" \
+              --prerelease
+          fi
+          gh release upload latest "$APK" --clobber
+          echo "下载直链：$(gh release view latest --json assets --jq '.assets[].url' | head -1)"

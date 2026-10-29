@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../core/build_info.dart';
 import '../models/timetable.dart';
 import '../services/timetable_repository.dart';
 
@@ -114,10 +115,11 @@ class MinePageState extends State<MinePage> {
           ),
 
           const _SectionTitle('关于'),
-          const _Tile(
+          _Tile(
             icon: Icons.info_outline,
             title: '关于掌上砚园',
-            subtitle: '版本 1.0.0',
+            subtitle: '版本 ${BuildInfo.displayVersion}',
+            onTap: () => _showAbout(context),
           ),
           _Tile(
             icon: Icons.description_outlined,
@@ -154,15 +156,66 @@ class MinePageState extends State<MinePage> {
     messenger.showSnackBar(const SnackBar(content: Text('已清空课表缓存')));
   }
 
+  /// 关于：显示版本、提交号与构建时间，便于确认当前装的是哪一版。
+  void _showAbout(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.school_outlined, size: 40),
+        title: const Text('掌上砚园'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('肇庆学院校园助手，提供教务课表导入与查看功能。'),
+            const SizedBox(height: 16),
+            _kv(ctx, '版本', BuildInfo.version),
+            _kv(ctx, '构建号', BuildInfo.buildNumber),
+            _kv(ctx, '提交', BuildInfo.gitSha),
+            if (BuildInfo.buildTime.isNotEmpty)
+              _kv(ctx, '构建时间', BuildInfo.buildTime),
+            _kv(ctx, '来源', BuildInfo.isCi ? 'CI 云端构建' : '本地构建'),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _kv(BuildContext ctx, String k, String v) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 64,
+              child: Text(k,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(ctx).colorScheme.outline,
+                  )),
+            ),
+            Expanded(
+              child: SelectableText(v, style: const TextStyle(fontSize: 13)),
+            ),
+          ],
+        ),
+      );
+
   void _showLicenses(BuildContext context) {
     showAboutDialog(
       context: context,
       applicationName: '掌上砚园',
-      applicationVersion: '1.0.0',
+      applicationVersion: BuildInfo.displayVersion,
       applicationIcon: const Icon(Icons.school_outlined, size: 40),
+      applicationLegalese: '肇庆学院校园助手',
       children: const [
         Text(
-          '肇庆学院校园助手，提供教务课表导入与查看功能。\n\n'
           '本项目参考并使用了以下开源项目：\n'
           '· ShiGuangSchedule/shiguangschedule —— 课表网格布局与课程卡片视觉（Apache-2.0）\n'
           '· 拾光课程表官方适配脚本 zqu_01.js —— 肇庆学院教务对接逻辑（Apache-2.0）',
