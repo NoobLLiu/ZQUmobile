@@ -29,9 +29,19 @@ import '../services/jwgl_service.dart';
 import '../services/timetable_repository.dart';
 import '../widgets/conflict_dialog.dart';
 
-/// 教务登录与课表抓取页。
+/// 教务系统页面。
+///
+/// 两种用法：
+///   - 纯登录（[allowImport] = false）：从首页「教务系统」进入，
+///     只做快捷访问与自动填学号，不提供导入功能；
+///   - 导入模式（[allowImport] = true）：从课表页进入，
+///     底部提供「执行导入」抓取课表。
 class JwglLoginPage extends StatefulWidget {
-  const JwglLoginPage({super.key});
+  const JwglLoginPage({super.key, this.allowImport = false});
+
+  /// 是否显示「执行导入」（抓取课表）。
+  /// 首页进入时只登录，不做导入。
+  final bool allowImport;
 
   @override
   State<JwglLoginPage> createState() => _JwglLoginPageState();
@@ -251,7 +261,8 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     final c = _controller;
     if (c == null || id.isEmpty) return;
 
-    final js = '''
+    final js =
+        '''
 (function (sid) {
   var sels = [
     '#yhm', 'input[name="yhm"]',
@@ -289,20 +300,28 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     _tipsShown = true;
 
     final where = _profile.hasCampusNetwork ? '教务系统（校内直连）' : 'WebVPN';
+    final tips = <String>[
+      if (widget.allowImport)
+        '1. 请登录至教务系统主页，然后点击下方「执行导入」。'
+      else
+        '1. 这里可以直接登录并使用教务系统网页，不会导入课表。',
+      '2. 本软件不储存密码，仅自动填写学号，请手动输入密码。',
+      '3. 如果未连接校园网，请先登录 WebVPN，'
+          '再从 WebVPN 功能页进入教务系统后登录教务系统。',
+    ];
+
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('登录 $where'),
-        content: const Column(
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('1. 请登录至教务系统主页，然后点击下方「执行导入」。'),
-            SizedBox(height: 10),
-            Text('2. 本软件不储存密码，仅自动填写学号，请手动输入密码。'),
-            SizedBox(height: 10),
-            Text('3. 如果未连接校园网，请先登录 WebVPN，'
-                '再从 WebVPN 功能页进入教务系统后登录教务系统。'),
+            for (final t in tips) ...[
+              Text(t),
+              if (t != tips.last) const SizedBox(height: 10),
+            ],
           ],
         ),
         actions: [
@@ -465,13 +484,14 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     if (startDate.isEmpty) {
       final now = DateTime.now();
       final monday = now.subtract(Duration(days: now.weekday - 1));
-      startDate = '${monday.year.toString().padLeft(4, '0')}-'
+      startDate =
+          '${monday.year.toString().padLeft(4, '0')}-'
           '${monday.month.toString().padLeft(2, '0')}-'
           '${monday.day.toString().padLeft(2, '0')}';
     }
 
-    final slots = _accSlots ??
-        kPresetTimeSlots.map((e) => TimeSlot.fromJson(e)).toList();
+    final slots =
+        _accSlots ?? kPresetTimeSlots.map((e) => TimeSlot.fromJson(e)).toList();
 
     final tt = Timetable(
       term: '',
@@ -565,8 +585,10 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     // 兜底：20 秒内没有任何回传，说明脚本没跑起来
     await Future.delayed(const Duration(seconds: 20));
     if (!mounted || token != _fetchToken || !_fetching) return;
-    _fail('没有收到教务系统的响应。\n请确认：① 已登录教务系统；'
-        '② 当前停留在教务系统内的页面（不是 WebVPN 首页）。');
+    _fail(
+      '没有收到教务系统的响应。\n请确认：① 已登录教务系统；'
+      '② 当前停留在教务系统内的页面（不是 WebVPN 首页）。',
+    );
   }
 
   Future<void> _reload() => _controller?.reload() ?? Future.value();
@@ -663,8 +685,11 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.error_outline,
-                        size: 18, color: theme.colorScheme.onErrorContainer),
+                    Icon(
+                      Icons.error_outline,
+                      size: 18,
+                      color: theme.colorScheme.onErrorContainer,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -678,8 +703,11 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       onPressed: () => setState(() => _error = null),
-                      icon: Icon(Icons.close,
-                          size: 18, color: theme.colorScheme.onErrorContainer),
+                      icon: Icon(
+                        Icons.close,
+                        size: 18,
+                        color: theme.colorScheme.onErrorContainer,
+                      ),
                     ),
                   ],
                 ),
@@ -708,35 +736,37 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
           ),
         ],
       ),
-      bottomNavigationBar: BottomAppBar(
-        height: 72,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                _fetching ? _status : '登录到教务系统主页后，点击右侧「执行导入」',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+      bottomNavigationBar: !widget.allowImport
+          ? null
+          : BottomAppBar(
+              height: 72,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _fetching ? _status : '登录到教务系统主页后，点击右侧「执行导入」',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  FilledButton(
+                    onPressed: (!_ready || _fetching) ? null : _startImport,
+                    child: _fetching
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('执行导入'),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 12),
-            FilledButton(
-              onPressed: (!_ready || _fetching) ? null : _startImport,
-              child: _fetching
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('执行导入'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

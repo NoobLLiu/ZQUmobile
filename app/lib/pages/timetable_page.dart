@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../models/timetable.dart';
 import '../services/timetable_repository.dart';
+import 'jwgl_login_page.dart';
 import '../widgets/schedule_grid.dart';
 
 /// 课表页。
@@ -63,7 +64,11 @@ class _TimetablePageState extends State<TimetablePage> {
   Future<void> _refresh() async {
     setState(() => _refreshing = true);
     try {
-      await Navigator.of(context).pushNamed('/jwgl');
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const JwglLoginPage(allowImport: true),
+        ),
+      );
       if (mounted) await _load();
     } finally {
       if (mounted) setState(() => _refreshing = false);
@@ -84,8 +89,9 @@ class _TimetablePageState extends State<TimetablePage> {
             if (tt != null)
               Text(
                 '${tt.termName} · 共 ${tt.courses.length} 门课',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.outline),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
               ),
           ],
         ),
@@ -94,7 +100,9 @@ class _TimetablePageState extends State<TimetablePage> {
           if (tt != null)
             IconButton(
               onPressed: _toggleWeekends,
-              icon: Icon(_showWeekends ? Icons.weekend : Icons.weekend_outlined),
+              icon: Icon(
+                _showWeekends ? Icons.weekend : Icons.weekend_outlined,
+              ),
               color: _showWeekends ? theme.colorScheme.primary : null,
               tooltip: _showWeekends ? '隐藏周末' : '显示周末',
             ),
@@ -104,7 +112,10 @@ class _TimetablePageState extends State<TimetablePage> {
               const Padding(
                 padding: EdgeInsets.all(14),
                 child: SizedBox(
-                    width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
               )
             else
               IconButton(
@@ -117,35 +128,35 @@ class _TimetablePageState extends State<TimetablePage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : tt == null
-              ? _EmptyState(onGoLogin: _goLogin)
-              : Column(
-                  children: [
-                    _WeekSelector(
-                      week: _week,
-                      totalWeeks: tt.totalWeeks,
-                      onChanged: (w) => setState(() => _week = w),
-                    ),
-                    const Divider(height: 1),
-                    // 本周无课但学期内有课时给出提示，避免看着像“数据没导入”
-                    if (!_hasCourseInWeek(tt, _week) && tt.courses.isNotEmpty)
-                      _NoCourseHint(
-                        week: _week,
-                        total: tt.courses.length,
-                        range: _weeksRange(tt),
-                      ),
-                    Expanded(
-                      child: ScheduleGrid(
-                        courses: tt.courses,
-                        week: _week,
-                        totalWeeks: tt.totalWeeks,
-                        timeSlots: tt.timeSlots,
-                        semesterStartDate: tt.semesterStartDate,
-                        showWeekends: _showWeekends,
-                        onCourseTap: _showDetail,
-                      ),
-                    ),
-                  ],
+          ? _EmptyState(onGoLogin: _goLogin)
+          : Column(
+              children: [
+                _WeekSelector(
+                  week: _week,
+                  totalWeeks: tt.totalWeeks,
+                  onChanged: (w) => setState(() => _week = w),
                 ),
+                const Divider(height: 1),
+                // 本周无课但学期内有课时给出提示，避免看着像“数据没导入”
+                if (!_hasCourseInWeek(tt, _week) && tt.courses.isNotEmpty)
+                  _NoCourseHint(
+                    week: _week,
+                    total: tt.courses.length,
+                    range: _weeksRange(tt),
+                  ),
+                Expanded(
+                  child: ScheduleGrid(
+                    courses: tt.courses,
+                    week: _week,
+                    totalWeeks: tt.totalWeeks,
+                    timeSlots: tt.timeSlots,
+                    semesterStartDate: tt.semesterStartDate,
+                    showWeekends: _showWeekends,
+                    onCourseTap: _showDetail,
+                  ),
+                ),
+              ],
+            ),
     );
   }
 
@@ -173,7 +184,9 @@ class _TimetablePageState extends State<TimetablePage> {
 
   /// 去教务系统登录并同步课表，回来后自动刷新。
   Future<void> _goLogin() async {
-    await Navigator.of(context).pushNamed('/jwgl');
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const JwglLoginPage(allowImport: true)),
+    );
     if (!mounted) return;
     await _load();
   }
@@ -193,8 +206,7 @@ class _TimetablePageState extends State<TimetablePage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(course.name,
-                style: Theme.of(ctx).textTheme.titleLarge),
+            Text(course.name, style: Theme.of(ctx).textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
               '共 ${course.weeks.length} 周 · ${course.weeks.join(', ')}',
@@ -214,21 +226,24 @@ class _TimetablePageState extends State<TimetablePage> {
   }
 
   static String _weekdayCn(int day) =>
-      const ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
-          [day.clamp(0, 7)];
+      const ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'][day.clamp(0, 7)];
 
   Widget _kv(BuildContext ctx, String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-                width: 52,
-                child: Text(k, style: TextStyle(color: Theme.of(ctx).colorScheme.outline))),
-            Expanded(child: Text(v)),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 52,
+          child: Text(
+            k,
+            style: TextStyle(color: Theme.of(ctx).colorScheme.outline),
+          ),
         ),
-      );
+        Expanded(child: Text(v)),
+      ],
+    ),
+  );
 }
 
 /// 周次切换条。
@@ -255,11 +270,11 @@ class _WeekSelector extends StatelessWidget {
           ),
           Expanded(
             child: Center(
-              child: Text('第 $week 周',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold)),
+              child: Text(
+                '第 $week 周',
+                style: Theme.of(context).textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
             ),
           ),
           IconButton(
@@ -287,29 +302,32 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.event_note_outlined,
-                size: 64, color: theme.colorScheme.outline),
+            Icon(
+              Icons.event_note_outlined,
+              size: 64,
+              color: theme.colorScheme.outline,
+            ),
             const SizedBox(height: 16),
             Text(
               '还没有课表数据',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               '请先登录教务系统，同步本学期课表',
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(color: theme.colorScheme.outline),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
             ),
             const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: onGoLogin,
               icon: const Icon(Icons.login),
               label: const Text('去登录教务系统'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(200, 46),
-              ),
+              style: FilledButton.styleFrom(minimumSize: const Size(200, 46)),
             ),
           ],
         ),
@@ -339,14 +357,18 @@ class _NoCourseHint extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          Icon(Icons.info_outline,
-              size: 16, color: theme.colorScheme.onSecondaryContainer),
+          Icon(
+            Icons.info_outline,
+            size: 16,
+            color: theme.colorScheme.onSecondaryContainer,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               '第 $week 周没有课程排课 · 已导入 $total 门课（$range）',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSecondaryContainer),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSecondaryContainer,
+              ),
             ),
           ),
         ],
