@@ -4,9 +4,11 @@ library;
 import 'package:flutter/material.dart';
 
 import '../core/build_info.dart';
+import '../models/profile.dart';
 import '../models/timetable.dart';
-import '../services/jwgl_adapter_repository.dart';
+import '../services/profile_repository.dart';
 import '../services/timetable_repository.dart';
+import '../widgets/profile_dialog.dart';
 
 /// 我的页面。
 class MinePage extends StatefulWidget {
@@ -20,9 +22,8 @@ class MinePage extends StatefulWidget {
 class MinePageState extends State<MinePage> {
   Timetable? _tt;
 
-  /// 当前生效的适配脚本信息（内置 / 已更新）。
-  AdapterScript? _adapter;
-  bool _checkingAdapter = false;
+  /// 通用个人信息（学号 / 学期 / 是否已购校园网）。
+  Profile _profile = const Profile();
 
   @override
   void initState() {
@@ -32,45 +33,21 @@ class MinePageState extends State<MinePage> {
 
   Future<void> _load() async {
     final tt = await TimetableRepository.load();
-    final adapter = await JwglAdapterRepository.load();
+    final profile = await ProfileRepository.load();
     if (!mounted) return;
     setState(() {
       _tt = tt;
-      _adapter = adapter;
+      _profile = profile;
     });
   }
 
-  /// 从拾光课表适配仓库下载最新脚本。
-  Future<void> _checkAdapter(BuildContext context) async {
-    final messenger = ScaffoldMessenger.of(context);
-    setState(() => _checkingAdapter = true);
-    try {
-      final updated = await JwglAdapterRepository.checkUpdate();
-      if (!mounted) return;
-      setState(() => _adapter = updated);
-      messenger.showSnackBar(
-        const SnackBar(content: Text('适配脚本已更新到最新版本')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text('更新失败：$e')),
-      );
-    } finally {
-      if (mounted) setState(() => _checkingAdapter = false);
-    }
-  }
-
-  /// 恢复随应用发布的内置脚本。
-  Future<void> _resetAdapter(BuildContext context) async {
-    final messenger = ScaffoldMessenger.of(context);
-    await JwglAdapterRepository.resetToBundled();
-    final adapter = await JwglAdapterRepository.load();
+  /// 修改个人信息。
+  Future<void> _editProfile(BuildContext context) async {
+    final updated = await showProfileDialog(context, initial: _profile);
+    if (updated == null) return;
+    await ProfileRepository.save(updated);
     if (!mounted) return;
-    setState(() => _adapter = adapter);
-    messenger.showSnackBar(
-      const SnackBar(content: Text('已恢复内置脚本')),
-    );
+    setState(() => _profile = updated);
   }
 
   /// 供外部在登录页返回后调用。
@@ -137,26 +114,28 @@ class MinePageState extends State<MinePage> {
             onTap: () => _confirmClear(context),
           ),
 
-          const _SectionTitle('教务适配脚本'),
+          const _SectionTitle('个人资料'),
           _Tile(
-            icon: Icons.extension_outlined,
-            title: '适配脚本',
-            subtitle: _adapter == null
-                ? '读取中 ...'
-                : '${_adapter!.sourceLabel}'
-                    '${_adapter!.updatedAt == null ? '' : ' · ${_adapter!.updatedAt!.substring(0, 10)}'}',
+            icon: Icons.badge_outlined,
+            title: '学号',
+            subtitle: _profile.studentId.isEmpty ? '未填写' : _profile.studentId,
           ),
           _Tile(
-            icon: Icons.cloud_download_outlined,
-            title: '检查脚本更新',
-            subtitle: _checkingAdapter ? '正在从拾光课表适配仓库下载 ...' : '从上游获取最新适配脚本',
-            onTap: _checkingAdapter ? null : () => _checkAdapter(context),
+            icon: Icons.event_available_outlined,
+            title: '学期',
+            subtitle: _profile.term,
           ),
           _Tile(
-            icon: Icons.restore_outlined,
-            title: '恢复内置脚本',
-            subtitle: '丢弃已下载的脚本，回到随应用发布的版本',
-            onTap: () => _resetAdapter(context),
+            icon: Icons.wifi_outlined,
+            title: '校园网',
+            subtitle:
+                _profile.hasCampusNetwork ? '已购（校内直连）' : '未购（走 WebVPN）',
+          ),
+          _Tile(
+            icon: Icons.edit_outlined,
+            title: '修改个人信息',
+            subtitle: '学号、学期、是否已购校园网',
+            onTap: () => _editProfile(context),
           ),
 
           const _SectionTitle('关于'),

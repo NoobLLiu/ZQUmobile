@@ -19,11 +19,12 @@ library;
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../models/profile.dart';
 import '../models/timetable.dart';
 import '../services/jwgl_adapter_repository.dart';
+import '../services/profile_repository.dart';
 import '../services/jwgl_service.dart';
 import '../services/timetable_repository.dart';
 import '../widgets/conflict_dialog.dart';
@@ -42,9 +43,11 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   /// 注入脚本 = 桥接 shim + 上游适配脚本。
   String? _injectJs;
 
-  /// 默认打开教务系统首页（校内可直连；校外可在菜单里改成 WebVPN 地址）。
-  static const String defaultUrl = 'https://jwgl.zqu.edu.cn/';
-  static const String _prefsKeyUrl = 'zsy_jwgl_entry_url';
+  /// 已购校园网：校内直连教务系统。
+  static const String campusUrl = 'https://jwgl.zqu.edu.cn/';
+
+  /// 未购校园网：先经 WebVPN 进入，再从功能页进教务系统。
+  static const String webvpnUrl = 'https://webvpn-free.zqu.edu.cn/';
 
   double _progress = 0;
   bool _loadingPage = true;
@@ -53,8 +56,11 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   String _status = '请在下方网页中登录教务系统（验证码需自行输入）';
   String? _error;
 
-  /// 当前使用的适配脚本来源（内置 / 已更新），显示在底部引导里。
-  String _adapterLabel = '';
+  /// 通用个人信息（学号 / 学期 / 校园网）。
+  Profile _profile = const Profile();
+
+  /// 登录须知是否已提示过（每次进入页面提示一次）。
+  bool _tipsShown = false;
 
   /// 注入脚本后等待回传的令牌，用于兜底「点了没反应」。
   int _fetchToken = 0;
@@ -76,16 +82,17 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   }
 
   Future<void> _init() async {
-    // 脚本与本体解耦：优先用应用内下载的最新适配脚本，没有则用内置副本
-    final shim = await JwglAdapterRepository.loadShim();
-    final adapter = await JwglAdapterRepository.load();
-    final sp = await SharedPreferences.getInstance();
-    final entryUrl = sp.getString(_prefsKeyUrl) ?? defaultUrl;
+    // 适配脚本以文件形式内置在项目里，随应用发布，不做运行时下载
+    final injectable = await JwglAdapterRepository.loadInjectable();
+    final profile = await ProfileRepository.load();
     if (!mounted) return;
 
+    // 入口由「是否已购校园网」决定
+    final entryUrl = profile.hasCampusNetwork ? campusUrl : webvpnUrl;
+
     setState(() {
-      _injectJs = JwglAdapterRepository.compose(shim, adapter.content);
-      _adapterLabel = adapter.sourceLabel;
+      _injectJs = injectable;
+      _profile = profile;
     });
 
     final controller = WebViewController()
@@ -114,6 +121,8 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
               if (!mounted || t == null || t.isEmpty) return;
               setState(() => _pageTitle = t);
             });
+            // 每次页面加载完成都尝试填入学号（登录页、WebVPN 页各有一处输入框）
+            _autofillStudentId();
           },
           onWebResourceError: (err) {
             if (!mounted) return;
@@ -132,6 +141,11 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
     if (!mounted) return;
     setState(() => _controller = controller);
+
+    // 打开页面即提示登录须知
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showLoginTipsIfNeeded();
+    });
   }
 
   // ------------------------------------------------------------------ 回传处理
@@ -226,6 +240,81 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     }
   }
 
+  // ---------------------------------------------------- 自动填学号 / 须知
+
+  /// 在页面里自动填入学号（不填密码）。
+  ///
+  /// 教务（URP）与 WebVPN（深信服）的登录框 id/name 各不相同，
+  /// 这里按常见命名逐个试；已填过内容的输入框不覆盖。
+  Future<void> _autofillStudentId() async {
+    final id = _profile.studentId.trim();
+    final c = _controller;
+    if (c == null || id.isEmpty) return;
+
+    final js = '''
+(function (sid) {
+  var sels = [
+    '#yhm', 'input[name="yhm"]',
+    '#username', 'input[name="username"]',
+    '#userName', 'input[name="userName"]',
+    '#account', 'input[name="account"]',
+    '#loginName', 'input[name="loginName"]',
+    '#svpn_name', 'input[name="svpn_name"]'
+  ];
+  for (var i = 0; i < sels.length; i++) {
+    var el = null;
+    try { el = document.querySelector(sels[i]); } catch (e) { el = null; }
+    if (!el || el.disabled || el.readOnly) continue;
+    if (el.value) return 'skip';
+    el.focus();
+    el.value = sid;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.blur();
+    return 'ok';
+  }
+  return 'none';
+})(${jsonEncode(id)});
+''';
+    try {
+      await c.runJavaScript(js);
+    } catch (_) {
+      /* 页面还没就绪时忽略，下次加载会再试 */
+    }
+  }
+
+  /// 打开页面时提示登录须知（每次进入提示一次）。
+  Future<void> _showLoginTipsIfNeeded() async {
+    if (_tipsShown || !mounted) return;
+    _tipsShown = true;
+
+    final where = _profile.hasCampusNetwork ? '教务系统（校内直连）' : 'WebVPN';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('登录 $where'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('1. 请登录至教务系统主页，然后点击下方「执行导入」。'),
+            SizedBox(height: 10),
+            Text('2. 本软件不储存密码，仅自动填写学号，请手动输入密码。'),
+            SizedBox(height: 10),
+            Text('3. 如果未连接校园网，请先登录 WebVPN，'
+                '再从 WebVPN 功能页进入教务系统后登录教务系统。'),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ---------------------------------------------------- 脚本请求（弹窗交互）
 
   /// 处理脚本发来的用户输入请求：选学期 / 确认开学日期。
@@ -241,7 +330,11 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       final items = ((payload['items'] as List?) ?? [])
           .map((e) => e.toString())
           .toList();
-      final def = (payload['defaultIndex'] as num?)?.toInt() ?? 0;
+      // 默认选中：优先用个人信息里选的学期，其次用脚本给的默认索引
+      var def = (payload['defaultIndex'] as num?)?.toInt() ?? 0;
+      final want = _profile.term.trim();
+      final hit = items.indexOf(want);
+      if (hit >= 0) def = hit;
       value = await _pickTerm(items, def);
     } else if (reqType == 'startDate') {
       final def = (payload['defaultText'] ?? '').toString();
@@ -308,6 +401,10 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
         );
       },
     );
+    if (picked != null && picked >= 0 && picked < items.length) {
+      // 学期名取用户选中的那一项（不要再用网页标题）
+      _accTermName = items[picked];
+    }
     return picked;
   }
 
@@ -378,9 +475,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
     final tt = Timetable(
       term: '',
-      // 学期名用教务学期下拉框里的文本（如 2026-2027-1），
-      // 不能用网页标题（那是「教学管理系统」）
-      termName: _accTermName,
+      // 学期名取用户在「选择学期」里选中的那一项；
+      // 拿不到时退回个人信息里设置的学期（不要用网页标题）
+      termName: _accTermName.isNotEmpty ? _accTermName : _profile.term,
       totalWeeks: totalWeeks,
       semesterStartDate: startDate,
       courses: courses,
@@ -480,8 +577,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     if (controller == null) return;
 
     final current = await controller.currentUrl();
+    final fallback = _profile.hasCampusNetwork ? campusUrl : webvpnUrl;
     final input = TextEditingController(
-      text: (current == null || current == 'about:blank') ? defaultUrl : current,
+      text: (current == null || current == 'about:blank') ? fallback : current,
     );
 
     if (!mounted) return;
@@ -515,9 +613,6 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     final trimmed = (url ?? '').trim();
     if (trimmed.isEmpty) return;
     final full = trimmed.startsWith('http') ? trimmed : 'https://$trimmed';
-
-    final sp = await SharedPreferences.getInstance();
-    await sp.setString(_prefsKeyUrl, full);
     await controller.loadRequest(Uri.parse(full));
   }
 
@@ -620,9 +715,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
           children: [
             Expanded(
               child: Text(
-                _fetching
-                    ? _status
-                    : '登录完成后点击导入 · 脚本：$_adapterLabel',
+                _fetching ? _status : '登录到教务系统主页后，点击右侧「执行导入」',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

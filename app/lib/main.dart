@@ -10,6 +10,8 @@ import 'pages/home_page.dart';
 import 'pages/jwgl_login_page.dart';
 import 'pages/mine_page.dart';
 import 'pages/timetable_page.dart';
+import 'services/profile_repository.dart';
+import 'widgets/profile_dialog.dart';
 
 void main() {
   runApp(const ZhangShangZhaoYuanApp());
@@ -78,6 +80,28 @@ class _RootShellState extends State<RootShell> {
 
   final _homeKey = GlobalKey<HomePageState>();
   final _mineKey = GlobalKey<MinePageState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // 首帧后检查个人信息，首次使用或资料不完整时引导填写
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureProfile());
+  }
+
+  Future<void> _ensureProfile() async {
+    final profile = await ProfileRepository.load();
+    if (!mounted || profile.isComplete) return;
+
+    final filled = await showProfileDialog(
+      context,
+      initial: profile,
+      allowCancel: false,
+    );
+    if (filled == null) return;
+    await ProfileRepository.save(filled);
+    if (!mounted) return;
+    _mineKey.currentState?.reload();
+  }
 
   @override
   Widget build(BuildContext context) {
