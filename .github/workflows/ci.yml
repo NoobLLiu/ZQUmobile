@@ -36,8 +36,13 @@ jobs:
       # 若不预装，AGP 会自行下载，且 runner 上 sdkmanager 偶发 Connection refused。
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ninja"
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ninja" || true
+          else
+            echo "sdkmanager 不可用，跳过预装（AGP 会自行下载）"
+          fi
 
       - name: Pub get
         run: flutter pub get
@@ -96,8 +101,13 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ninja"
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ninja" || true
+          else
+            echo "sdkmanager 不可用，跳过预装（AGP 会自行下载）"
+          fi
 
       - name: Build release APK (retry)
         run: flutter build apk --release
