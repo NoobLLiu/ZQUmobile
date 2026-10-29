@@ -121,6 +121,50 @@ void main() {
     expect(loaded.semesterStartDate, '2026-08-31');
   });
 
+  testWidgets('隐藏周末时周六课程不渲染，显示周末时渲染', (tester) async {
+    final courses = [
+      Course(
+        name: '周末选修',
+        teacher: '赵老师',
+        position: 'D404',
+        day: 6,
+        startSection: 1,
+        endSection: 2,
+        weeks: [9],
+      ),
+    ];
+
+    // 隐藏周末
+    await tester.pumpWidget(_wrap(
+      ScheduleGrid(
+        courses: courses,
+        week: 9,
+        totalWeeks: 18,
+        timeSlots: _slots(),
+        semesterStartDate: '2026-08-31',
+        showWeekends: false,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('周末选修'), findsNothing);
+    expect(find.text('周六'), findsNothing);
+
+    // 显示周末
+    await tester.pumpWidget(_wrap(
+      ScheduleGrid(
+        courses: courses,
+        week: 9,
+        totalWeeks: 18,
+        timeSlots: _slots(),
+        semesterStartDate: '2026-08-31',
+        showWeekends: true,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('周末选修'), findsOneWidget);
+    expect(find.text('周六'), findsOneWidget);
+  });
+
   test('课表 JSON 往返不丢课程', () {
     final tt = Timetable(
       term: '202601',

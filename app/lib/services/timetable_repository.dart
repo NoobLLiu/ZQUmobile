@@ -46,6 +46,21 @@ class TimetableRepository {
     await sp.remove(_prefsKey);
   }
 
+  static const _prefsKeyShowWeekends = 'zsy_show_weekends';
+
+  /// 读取「是否显示周末」偏好；从未设置过返回 null（由调用方按课程自动判断）。
+  static Future<bool?> loadShowWeekends() async {
+    final sp = await SharedPreferences.getInstance();
+    if (!sp.containsKey(_prefsKeyShowWeekends)) return null;
+    return sp.getBool(_prefsKeyShowWeekends) ?? true;
+  }
+
+  /// 保存「是否显示周末」偏好。
+  static Future<void> saveShowWeekends(bool value) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool(_prefsKeyShowWeekends, value);
+  }
+
   /// 记录是否已登录教务系统（仅用于界面提示，不存密码）。
   static Future<void> setLoggedIn(bool value) async {
     final sp = await SharedPreferences.getInstance();

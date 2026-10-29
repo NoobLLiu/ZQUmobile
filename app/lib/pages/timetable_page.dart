@@ -21,6 +21,9 @@ class _TimetablePageState extends State<TimetablePage> {
   int _week = 1;
   bool _refreshing = false;
 
+  /// 是否显示周末。默认按课程自动判断：学期内没有周末课就隐藏。
+  bool _showWeekends = false;
+
   @override
   void initState() {
     super.initState();
@@ -29,12 +32,31 @@ class _TimetablePageState extends State<TimetablePage> {
 
   Future<void> _load() async {
     final tt = await TimetableRepository.load();
+    final savedPref = await TimetableRepository.loadShowWeekends();
     if (!mounted) return;
     setState(() {
       _tt = tt;
       _loading = false;
       _week = tt?.weekOf(DateTime.now()) ?? 1;
+      // 用户手动设置过就尊重其选择；否则按是否有周末课自动决定
+      _showWeekends = savedPref ?? _hasWeekendCourses(tt);
     });
+  }
+
+  /// 学期内是否存在周末（周六/周日）的课程。
+  bool _hasWeekendCourses(Timetable? tt) {
+    if (tt == null) return false;
+    for (final c in tt.courses) {
+      if (c.day >= 6) return true;
+    }
+    return false;
+  }
+
+  /// 切换周末显示，并记住选择。
+  Future<void> _toggleWeekends() async {
+    final next = !_showWeekends;
+    setState(() => _showWeekends = next);
+    await TimetableRepository.saveShowWeekends(next);
   }
 
   /// 重新同步：去教务系统导入一次，回来刷新。
@@ -68,6 +90,14 @@ class _TimetablePageState extends State<TimetablePage> {
           ],
         ),
         actions: [
+          // 周末显示开关：有课表时才需要
+          if (tt != null)
+            IconButton(
+              onPressed: _toggleWeekends,
+              icon: Icon(_showWeekends ? Icons.weekend : Icons.weekend_outlined),
+              color: _showWeekends ? theme.colorScheme.primary : null,
+              tooltip: _showWeekends ? '隐藏周末' : '显示周末',
+            ),
           // 有课表时提供「重新同步」；无数据时由页面中间的按钮引导去登录
           if (tt != null)
             if (_refreshing)
@@ -110,6 +140,7 @@ class _TimetablePageState extends State<TimetablePage> {
                         totalWeeks: tt.totalWeeks,
                         timeSlots: tt.timeSlots,
                         semesterStartDate: tt.semesterStartDate,
+                        showWeekends: _showWeekends,
                         onCourseTap: _showDetail,
                       ),
                     ),
@@ -170,15 +201,21 @@ class _TimetablePageState extends State<TimetablePage> {
               style: Theme.of(ctx).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
-            _kv(ctx, '时间', '第$course.day 周 $slotText'),
+            // 注意：$course.day 这种写法只会插值 $course，必须用 ${'$'}{...}
+            _kv(ctx, '时间', '${_weekdayCn(course.day)} $slotText'),
             _kv(ctx, '教室', course.position.isEmpty ? '待定' : course.position),
             _kv(ctx, '教师', course.teacher.isEmpty ? '—' : course.teacher),
-            if (tt != null) _kv(ctx, '学期', tt.termName.isEmpty ? tt.term : tt.termName),
+            if (tt != null)
+              _kv(ctx, '学期', tt.termName.isEmpty ? '未获取' : tt.termName),
           ],
         ),
       ),
     );
   }
+
+  static String _weekdayCn(int day) =>
+      const ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
+          [day.clamp(0, 7)];
 
   Widget _kv(BuildContext ctx, String k, String v) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 3),

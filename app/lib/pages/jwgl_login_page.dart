@@ -57,6 +57,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   List<TimeSlot>? _accSlots;
   int _accTotalWeeks = 0;
   String _accStartDate = '';
+  String _accTermName = '';
 
   /// 「执行导入」是否可用（拿到脚本后才可用）。
   bool get _ready => _controller != null && _injectJs != null;
@@ -161,6 +162,13 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     // 官方脚本分段回传
     final j = msg.json;
     switch (msg.type) {
+      case 'term':
+        _accTermName = (j?['termName'] ?? '').toString();
+        if (_accTermName.isNotEmpty) {
+          setState(() => _status = '已选择学期：$_accTermName');
+        }
+        return;
+
       case 'courses':
         final list = ((j?['courses'] as List?) ?? [])
             .whereType<Map<String, dynamic>>()
@@ -236,7 +244,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
     final tt = Timetable(
       term: '',
-      termName: _pageTitle,
+      // 学期名用教务学期下拉框里的文本（如 2026-2027-1），
+      // 不能用网页标题（那是「教学管理系统」）
+      termName: _accTermName,
       totalWeeks: totalWeeks,
       semesterStartDate: startDate,
       courses: courses,
@@ -305,6 +315,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     _accSlots = null;
     _accTotalWeeks = 0;
     _accStartDate = '';
+    _accTermName = '';
 
     setState(() {
       _fetching = true;

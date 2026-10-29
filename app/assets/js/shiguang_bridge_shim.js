@@ -61,8 +61,49 @@
       return Promise.resolve(defaultText ? String(defaultText) : '');
     },
     // 学期选择 → 采用官方脚本给的默认索引（即教务系统的当前学期）
+    // 学期选择 → 自动挑选「当前学年学期」，并把选中的学期名回报给 Flutter。
+    //
+    // 不能直接用官方给的 defaultIndex：教务下拉框的当前值取不到时，
+    // 官方脚本会退回 index 0，那往往是最老的学期，
+    // 会导错学期并让「第几周」完全错位。
     showSingleSelection: function (title, itemsJson, defaultIndex) {
-      return Promise.resolve(defaultIndex);
+      var chosen = defaultIndex;
+      var chosenName = '';
+      try {
+        var items = JSON.parse(itemsJson) || [];
+        if (items.length > 0) {
+          var now = new Date();
+          var year = now.getFullYear();
+          var month = now.getMonth() + 1;
+          // 学年起始年：9 月及以后算今年，1-8 月算去年
+          var acadStart = month >= 9 ? year : year - 1;
+          var acad = acadStart + '-' + (acadStart + 1);
+          // 9 月到次年 1 月为第 1 学期，2 月到 8 月为第 2 学期
+          var termNo = (month >= 9 || month === 1) ? '1' : '2';
+
+          // 先找「学年 + 学期号」都对得上的，再退而求其次只匹配学年
+          var exact = -1;
+          var sameYear = -1;
+          for (var i = 0; i < items.length; i++) {
+            var text = String(items[i] || '');
+            if (text.indexOf(acad) === -1) continue;
+            if (sameYear === -1) sameYear = i;
+            if (text.indexOf(termNo) !== -1) { exact = i; }
+          }
+          if (exact >= 0) {
+            chosen = exact;
+          } else if (sameYear >= 0) {
+            chosen = sameYear;
+          }
+          if (chosen < 0 || chosen >= items.length) chosen = items.length - 1;
+
+          chosenName = String(items[chosen] || '');
+          post({ type: 'term', termName: chosenName });
+        }
+      } catch (e) {
+        /* 解析失败时退回官方给的默认索引 */
+      }
+      return Promise.resolve(chosen);
     },
     saveImportedCourses: function (json) {
       post({ type: 'courses', courses: JSON.parse(json) });

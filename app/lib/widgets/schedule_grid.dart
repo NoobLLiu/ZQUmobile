@@ -73,7 +73,7 @@ class ScheduleGrid extends StatelessWidget {
     final dates = _datesOfWeek(week);
 
     // 本周有课的记录 + 冲突分列
-    final blocks = _buildBlocks(week);
+    final blocks = _buildBlocks(week, displayDays);
 
     return LayoutBuilder(builder: (context, constraints) {
       // 每天列宽：尽量铺满可用宽度，列太多时最小 56
@@ -170,13 +170,15 @@ class ScheduleGrid extends StatelessWidget {
   }
 
   /// 构建该周的展示块，处理同一格多门课的并排显示。
-  List<_GridBlock> _buildBlocks(int week) {
+  List<_GridBlock> _buildBlocks(int week, int displayDays) {
     final active = <Course>[];
     final demoted = <Course>[];
 
     for (final c in courses) {
       // 坐标非法会导致块被画到网格外（看起来就像“课程消失”），先剔除
       if (c.day < 1 || c.day > 7) continue;
+      // 隐藏周末时，周六日的课程不参与布局
+      if (c.day > displayDays) continue;
       if (c.startSection < 1) continue;
       final end = c.endSection < c.startSection ? c.startSection : c.endSection;
 
@@ -317,7 +319,7 @@ class _DayHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 1),
                 Text(
-                  '$totalWeeks周',
+                  '共$totalWeeks周',
                   style: TextStyle(fontSize: 9, color: theme.colorScheme.outline),
                 ),
               ],
@@ -445,41 +447,77 @@ class _CourseBlockWidget extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(4),
               child: LayoutBuilder(builder: (context, box) {
-                final compact = box.maxHeight < 56;
+                // 按可用高度决定各段能排几行，尽量不截断、全部靠左对齐。
+                // 密度规则：
+                //   矮卡片（单节课）：课程名 2 行，不显示教师/地点
+                //   中等卡片：课程名 + 教师/地点各 2 行
+                //   高卡片（连堂）：课程名优先，信息行按剩余空间给
+                final h = box.maxHeight;
+                final w = box.maxWidth;
+                final nameFont = w >= 84 ? 13.0 : (w >= 64 ? 12.0 : 11.0);
+                final infoFont = w >= 84 ? 10.5 : 10.0;
+                final nameLineH = nameFont * 1.2;
+                final infoLineH = infoFont * 1.25;
+
+                final compact = h < 56;
+                final showInfo = !compact && h >= 72;
+
+                // 给信息留出的行数：空间越富余给得越多
+                final infoLines = compact
+                    ? 0
+                    : (h >= 150 ? 2 : (h >= 110 ? 2 : 1));
+
+                final infoH = infoLines * infoLineH * 2; // 教师 + 地点
+                final nameSpace = h - (showInfo ? infoH : 0);
+                final nameLines = math.max(1, (nameSpace / nameLineH).floor())
+                    .clamp(1, 6);
+
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.max,
                   children: [
-                    // 课程名：占满剩余空间，自动换行
+                    // 课程名：多行、靠左、自动换行
                     Flexible(
                       child: Text(
                         course.name,
+                        softWrap: true,
+                        maxLines: nameLines,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.left,
                         style: TextStyle(
-                          fontSize: compact ? 11 : 13,
+                          fontSize: nameFont,
                           fontWeight: FontWeight.bold,
                           height: 1.2,
                           color: fg,
                         ),
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (!compact) ...[
+                    if (showInfo) ...[
                       if (course.teacher.isNotEmpty)
                         Text(
                           course.teacher,
-                          maxLines: 1,
+                          softWrap: true,
+                          maxLines: infoLines,
                           overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.left,
                           style: TextStyle(
-                            fontSize: 10,
-                            height: 1.1,
-                            color: fg.withValues(alpha: 0.8),
+                            fontSize: infoFont,
+                            height: 1.25,
+                            color: fg.withValues(alpha: 0.82),
                           ),
                         ),
                       if (course.position.isNotEmpty)
                         Text(
                           '@${course.position}',
-                          maxLines: 1,
+                          softWrap: true,
+                          maxLines: infoLines,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 10, height: 1.1, color: fg),
+                          textAlign: TextAlign.left,
+                          style: TextStyle(
+                            fontSize: infoFont,
+                            height: 1.25,
+                            color: fg,
+                          ),
                         ),
                     ],
                   ],
