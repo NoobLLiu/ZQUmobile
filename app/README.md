@@ -55,6 +55,8 @@ flutter test
 
 - 仓库：<https://github.com/NoobLLiu/ZQUmobile>
 - 触发：向 `main` 推送即自动构建，也可在 Actions 页手动触发
+- 环境：`windows-latest`（其 Android SDK 镜像已预装 CMake，
+  Flutter 新版模板的 `:jni` 模块构建依赖它，ubuntu runner 会因缺 CMake 而失败）
 - 流程：pub get → analyze → test → `flutter build apk --release`
 - 下载：Actions 页 → 对应 run → Artifacts → `掌上砚园.apk`
 
