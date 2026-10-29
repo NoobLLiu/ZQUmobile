@@ -77,19 +77,20 @@ jobs:
             --dart-define=GIT_SHA=${{ github.sha }} \
             --dart-define=BUILD_TIME=$(date -u +%Y-%m-%dT%H:%MZ)
 
-      # 产物就是单个 apk，不套压缩包；文件名带版本号，避免与旧包混淆
+      # 产物就是单个 apk，不套压缩包；文件名带版本号，避免与旧包混淆。
+      # 用 ASCII 文件名：中文名在 windows runner 上经 gh CLI 上传会被吞掉（实测变成 -1.0.2.apk）。
       - name: Rename APK
         shell: bash
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
-             "build/app/outputs/flutter-apk/掌上砚园-${{ steps.ver.outputs.version }}.apk"
+             "build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}.apk"
           ls -lh build/app/outputs/flutter-apk/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: 掌上砚园-${{ steps.ver.outputs.version }}
-          path: app/build/app/outputs/flutter-apk/掌上砚园-${{ steps.ver.outputs.version }}.apk
+          name: zhangshangyanyuan-${{ steps.ver.outputs.version }}
+          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}.apk
           if-no-files-found: error
           retention-days: 90
 
@@ -101,7 +102,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APK="build/app/outputs/flutter-apk/掌上砚园-${{ steps.ver.outputs.version }}.apk"
+          APK="build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}.apk"
           if ! gh release view latest > /dev/null 2>&1; then
             gh release create latest \
               --title "最新构建" \
