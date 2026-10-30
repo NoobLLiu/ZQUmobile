@@ -59,24 +59,32 @@ flutter test
 
 ## 构建 APK（推荐走 CI）
 
-本项目通过 GitHub Actions 云端构建，产物是**单个 APK**（不套压缩包）：
+本项目通过 GitHub Actions 云端构建，产物按 CPU 架构拆成 **3 个 APK**（不套压缩包）。
+每个 APK 只带一种 ABI 的 native 库，体积约为整包的 1/3：
+
+| 文件 | 适用设备 | 体积 |
+|---|---|---|
+| `zhangshangyanyuan-<版本>-arm64-v8a.apk` | 绝大多数手机（约 2017 年后的机型），**一般选这个** | ~19 MB |
+| `zhangshangyanyuan-<版本>-armeabi-v7a.apk` | 老款 32 位手机 | ~15 MB |
+| `zhangshangyanyuan-<版本>-x86_64.apk` | 仅模拟器 / x86 设备 | ~19 MB |
+
+> 若不拆分，universal 整包会同时打进三种 ABI，实测达 **52 MB**。
 
 - 仓库：<https://github.com/NoobLLiu/ZQUmobile>
 - 触发：向 `main` 推送即自动构建，也可在 Actions 页手动触发
 - 环境：`windows-latest`（其 Android SDK 镜像已预装 CMake，
   Flutter 新版模板的 `:jni` 模块构建依赖它，ubuntu runner 会因缺 CMake 而失败）
-- 流程：pub get → analyze → test → `flutter build apk --release`
-- 下载：Actions 页 → 对应 run → Artifacts → `掌上砚园.apk`
-
-打 tag 时还会把 APK 挂到 Releases 页面，可直接下载安装。
+- 流程：pub get → analyze → test → `flutter build apk --release --split-per-abi`
+- 下载：Actions 页 → 对应 run → Artifacts（3 个 `.apk` 可直接单独下载，不是 zip）；
+  或 Releases 页 `latest` 下的三个 APK 直链
 
 > 本机构建 Gradle 依赖会因代理卡死，因此**不建议本地出包**，以 CI 为准。
 
 本地若确需构建：
 
 ```bash
-flutter build apk --release
-# 输出：build/app/outputs/flutter-apk/app-release.apk
+flutter build apk --release --split-per-abi
+# 输出：build/app/outputs/flutter-apk/app-<abi>-release.apk
 ```
 
 ## 目录结构

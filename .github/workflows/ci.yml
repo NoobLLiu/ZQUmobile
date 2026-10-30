@@ -67,47 +67,85 @@ jobs:
       - name: Test
         run: flutter test
 
-      # 版本/提交号注入到 App 内，界面上可直接看到「这是哪一版」
+      # 版本/提交号注入到 App 内，界面上可直接看到「这是哪一版」。
+      # --split-per-abi：按指令集拆成 3 个 APK，每个只含一种 ABI 的 native 库，
+      # 体积约为 universal 整包的 1/3（实测整包 52MB → 单 ABI 15–19MB）。
       - name: Build release APK
         shell: bash
         run: |
-          flutter build apk --release \
+          flutter build apk --release --split-per-abi \
             --dart-define=APP_VERSION=${{ steps.ver.outputs.version }} \
             --dart-define=APP_BUILD_NUMBER=${{ steps.ver.outputs.build }} \
             --dart-define=GIT_SHA=${{ github.sha }} \
             --dart-define=BUILD_TIME=$(date -u +%Y-%m-%dT%H:%MZ)
 
-      # 产物就是单个 apk，不套压缩包；文件名带版本号，避免与旧包混淆。
+      # 不套压缩包，直接上传 3 个 APK；文件名带版本号 + ABI，避免与旧包混淆。
       # 用 ASCII 文件名：中文名在 windows runner 上经 gh CLI 上传会被吞掉（实测变成 -1.0.2.apk）。
-      - name: Rename APK
+      - name: Rename APKs
         shell: bash
         run: |
-          mv build/app/outputs/flutter-apk/app-release.apk \
-             "build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}.apk"
-          ls -lh build/app/outputs/flutter-apk/
+          cd build/app/outputs/flutter-apk
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            mv "app-$abi-release.apk" \
+               "zhangshangyanyuan-${{ steps.ver.outputs.version }}-$abi.apk"
+          done
+          ls -lh
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      # 每个 APK 单独上传且不打包（archive: false），Actions 页面直接显示 3 个
+      # 可单独点击下载的 .apk，而不是一个 zip。
+      # 注意：archive 参数从 upload-artifact v5 起才有，v4 不支持。
+      - name: Upload arm64-v8a APK
+        uses: actions/upload-artifact@v7
         with:
-          name: zhangshangyanyuan-${{ steps.ver.outputs.version }}
-          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}.apk
+          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}-arm64-v8a.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload armeabi-v7a APK
+        uses: actions/upload-artifact@v7
+        with:
+          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}-armeabi-v7a.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload x86_64 APK
+        uses: actions/upload-artifact@v7
+        with:
+          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}-x86_64.apk
+          archive: false
           if-no-files-found: error
           retention-days: 90
 
       # 每次 main 构建都更新「latest」Release：
-      # 给出可直接下载的 .apk 直链（不是 zip），且文件名带版本号，不会被旧包顶掉。
+      # 上传 3 个 ABI 的 .apk 直链（不是 zip），文件名带版本号，不会被旧包顶掉。
+      # 上传后清掉 latest 里旧的整包 / 旧版本 APK，避免页面堆过期文件。
       - name: Publish to Release (latest)
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APK="build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}.apk"
+          VERSION="${{ steps.ver.outputs.version }}"
+          DIR="build/app/outputs/flutter-apk"
+          APKS=("$DIR/zhangshangyanyuan-$VERSION-arm64-v8a.apk" \
+                "$DIR/zhangshangyanyuan-$VERSION-armeabi-v7a.apk" \
+                "$DIR/zhangshangyanyuan-$VERSION-x86_64.apk")
           if ! gh release view latest > /dev/null 2>&1; then
             gh release create latest \
               --title "最新构建" \
               --notes "由 CI 自动构建，每次提交更新。" \
               --prerelease
           fi
-          gh release upload latest "$APK" --clobber
-          echo "下载直链：$(gh release view latest --json assets --jq '.assets[].url' | head -1)"
+          gh release upload latest "${APKS[@]}" --clobber
+
+          KEEP="zhangshangyanyuan-$VERSION-arm64-v8a.apk zhangshangyanyuan-$VERSION-armeabi-v7a.apk zhangshangyanyuan-$VERSION-x86_64.apk"
+          for name in $(gh release view latest --json assets --jq '.assets[].name'); do
+            case " $KEEP " in *" $name "*) continue ;; esac
+            if [[ "$name" == zhangshangyanyuan-*.apk ]]; then
+              gh release delete-asset latest "$name" --yes || true
+            fi
+          done
+
+          gh release view latest --json assets --jq '.assets[] | "\(.name)  \(.size)"'
