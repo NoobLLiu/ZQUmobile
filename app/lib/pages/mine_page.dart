@@ -55,57 +55,11 @@ class MinePageState extends State<MinePage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       appBar: AppBar(title: const Text('我的')),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
-          // 用户卡片
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 26,
-                      backgroundColor:
-                          theme.colorScheme.primary.withValues(alpha: 0.15),
-                      child: Icon(Icons.person_outline,
-                          color: theme.colorScheme.primary, size: 28),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _tt?.termName.isNotEmpty == true
-                                ? _tt!.termName
-                                : '肇庆学院同学',
-                            style: theme.textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _tt == null
-                                ? '尚未导入课表'
-                                : '已导入 ${_tt!.courses.length} 门课程 · ${_tt!.totalWeeks} 周',
-                            style: theme.textTheme.bodySmall
-                                ?.copyWith(color: theme.colorScheme.outline),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
           const _SectionTitle('课表数据'),
           _Tile(
             icon: Icons.delete_outline,
@@ -128,8 +82,7 @@ class MinePageState extends State<MinePage> {
           _Tile(
             icon: Icons.wifi_outlined,
             title: '校园网',
-            subtitle:
-                _profile.hasCampusNetwork ? '已购（校内直连）' : '未购（走 WebVPN）',
+            subtitle: _profile.hasCampusNetwork ? '已购（校内直连）' : '未购',
           ),
           _Tile(
             icon: Icons.edit_outlined,
