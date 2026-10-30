@@ -136,7 +136,10 @@ class ScheduleGrid extends StatelessWidget {
                     // 课程卡片
                     for (final b in blocks)
                       Positioned(
-                        left: leftW + (b.displayColumn) * colW +
+                        left: leftW +
+                            (b.displayColumn +
+                                    b.subColumnIndex * b.subColumnWidthFactor) *
+                                colW +
                             style.blockOuterPadding,
                         top: (b.startSection - 1) * rowH + style.blockOuterPadding,
                         width: colW * b.subColumnWidthFactor -
