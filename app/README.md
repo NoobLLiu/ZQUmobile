@@ -75,7 +75,8 @@ flutter test
 - 环境：`windows-latest`（其 Android SDK 镜像已预装 CMake，
   Flutter 新版模板的 `:jni` 模块构建依赖它，ubuntu runner 会因缺 CMake 而失败）
 - 流程：pub get → analyze → test → `flutter build apk --release --split-per-abi`
-- 下载：Actions 页 → 对应 run → Artifacts；或 Releases 页 `latest` 下的三个 APK 直链
+- 下载：Actions 页 → 对应 run → Artifacts（3 个 `.apk` 可直接单独下载，不是 zip）；
+  或 Releases 页 `latest` 下的三个 APK 直链
 
 > 本机构建 Gradle 依赖会因代理卡死，因此**不建议本地出包**，以 CI 为准。
 

@@ -91,11 +91,30 @@ jobs:
           done
           ls -lh
 
-      - name: Upload APKs
-        uses: actions/upload-artifact@v4
+      # 每个 APK 单独上传且不打包（archive: false），Actions 页面直接显示 3 个
+      # 可单独点击下载的 .apk，而不是一个 zip。
+      # 注意：archive 参数从 upload-artifact v5 起才有，v4 不支持。
+      - name: Upload arm64-v8a APK
+        uses: actions/upload-artifact@v7
         with:
-          name: zhangshangyanyuan-${{ steps.ver.outputs.version }}
-          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-*.apk
+          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}-arm64-v8a.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload armeabi-v7a APK
+        uses: actions/upload-artifact@v7
+        with:
+          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}-armeabi-v7a.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload x86_64 APK
+        uses: actions/upload-artifact@v7
+        with:
+          path: app/build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}-x86_64.apk
+          archive: false
           if-no-files-found: error
           retention-days: 90
 
