@@ -67,7 +67,7 @@ class HomePageState extends State<HomePage> {
       ),
       const HomeFeature(
         title: '教务系统',
-        subtitle: '登录肇庆学院教务系统，导入课表',
+        subtitle: '登录肇庆学院教务系统（校内直连 / WebVPN）',
         icon: Icons.school_outlined,
         route: '/jwgl',
       ),
