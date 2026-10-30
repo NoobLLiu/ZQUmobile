@@ -101,12 +101,12 @@ class _TimetablePageState extends State<TimetablePage> {
             IconButton(
               onPressed: _toggleWeekends,
               icon: Icon(
-                _showWeekends ? Icons.weekend : Icons.weekend_outlined,
+                _showWeekends ? Icons.date_range : Icons.date_range_outlined,
               ),
               color: _showWeekends ? theme.colorScheme.primary : null,
               tooltip: _showWeekends ? '隐藏周末' : '显示周末',
             ),
-          // 有课表时提供「重新同步」；无数据时由页面中间的按钮引导去登录
+          // 有课表时提供「导入 / 重新同步」入口；无数据时由页面中间的按钮引导去登录
           if (tt != null)
             if (_refreshing)
               const Padding(
@@ -120,8 +120,8 @@ class _TimetablePageState extends State<TimetablePage> {
             else
               IconButton(
                 onPressed: _refresh,
-                icon: const Icon(Icons.sync),
-                tooltip: '重新同步课表',
+                icon: const Icon(Icons.add),
+                tooltip: '导入课表',
               ),
         ],
       ),
