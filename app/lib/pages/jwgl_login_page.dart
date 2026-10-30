@@ -13,7 +13,8 @@
 /// 官方脚本按「课程 → 学期配置 → 作息时间 → 完成」分四次回传，
 /// 这里逐段累积，收到 done 后一次性组装并落库，任何一段都不会丢。
 ///
-/// 按需求，**不实现验证码自动填写**。
+/// WebVPN 的滑块验证码由注入的求解脚本（assets/js/webvpn_captcha_solver.js）
+/// 自动完成：识别缺口位置并合成拖动，失败自动换图重试，超过次数交还用户。
 library;
 
 import 'dart:convert';
@@ -53,6 +54,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   /// 注入脚本 = 桥接 shim + 上游适配脚本。
   String? _injectJs;
 
+  /// WebVPN 滑块验证码自动求解脚本。
+  String? _captchaSolverJs;
+
   /// 已购校园网：校内直连教务系统。
   static const String campusUrl = 'https://jwgl.zqu.edu.cn/';
 
@@ -63,7 +67,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   bool _loadingPage = true;
   bool _fetching = false;
   String _pageTitle = '教务系统';
-  String _status = '请在下方网页中登录教务系统（验证码需自行输入）';
+  String _status = '请在下方网页中登录教务系统（滑块验证将自动完成）';
   String? _error;
 
   /// 通用个人信息（学号 / 学期 / 校园网）。
@@ -94,6 +98,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   Future<void> _init() async {
     // 适配脚本以文件形式内置在项目里，随应用发布，不做运行时下载
     final injectable = await JwglAdapterRepository.loadInjectable();
+    final solver = await JwglAdapterRepository.loadCaptchaSolver();
     final profile = await ProfileRepository.load();
     if (!mounted) return;
 
@@ -102,6 +107,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
     setState(() {
       _injectJs = injectable;
+      _captchaSolverJs = solver;
       _profile = profile;
     });
 
@@ -133,6 +139,8 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
             });
             // 每次页面加载完成都尝试填入学号（登录页、WebVPN 页各有一处输入框）
             _autofillStudentId();
+            // 同时挂上滑块验证码求解器（脚本自带轮询与幂等，重复注入无害）
+            _injectCaptchaSolver();
           },
           onWebResourceError: (err) {
             if (!mounted) return;
@@ -171,6 +179,13 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
   void _onBridgeMessage(String raw) {
     if (!mounted) return;
+
+    // 滑块求解器的进度回传（独立类型，不进入导入协议的解析）
+    final preliminaryType = _peekBridgeType(raw);
+    if (preliminaryType == 'captcha') {
+      _onCaptchaMessage(raw);
+      return;
+    }
 
     final JwglBridgeMessage msg;
     try {
@@ -250,6 +265,45 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     }
   }
 
+  // ---------------------------------------------------- 滑块验证码回传
+
+  /// 只看消息类型，不做完整解析（避免 captcha 消息进入导入协议）。
+  String? _peekBridgeType(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return (decoded['type'] ?? '').toString();
+      }
+    } on FormatException {
+      /* 忽略 */
+    }
+    return null;
+  }
+
+  void _onCaptchaMessage(String raw) {
+    Map<String, dynamic>? j;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) j = decoded;
+    } on FormatException {
+      return;
+    }
+    if (j == null) return;
+    final state = (j['state'] ?? '').toString();
+    final message = (j['message'] ?? '').toString();
+    if (message.isEmpty) return;
+    setState(() {
+      if (state == 'solved') {
+        _error = null;
+      } else if (state == 'failed') {
+        // 交还用户手动处理，不算导入失败
+      }
+      _status = message;
+    });
+  }
+
+  // ---------------------------------------------------- 滑块验证码回传结束
+
   // ---------------------------------------------------- 自动填学号 / 须知
 
   /// 在页面里自动填入学号（不填密码）。
@@ -294,6 +348,21 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     }
   }
 
+  /// 注入滑块验证码求解器。
+  ///
+  /// 脚本只在 WebVPN 登录域起作用：它轮询 #drag-captcha-layer，
+  /// 其他页面（教务系统、WebVPN 功能页）上什么都不做。
+  Future<void> _injectCaptchaSolver() async {
+    final js = _captchaSolverJs;
+    final c = _controller;
+    if (c == null || js == null) return;
+    try {
+      await c.runJavaScript(js);
+    } catch (_) {
+      /* 页面尚未就绪时忽略，下次加载会再试 */
+    }
+  }
+
   /// 打开页面时提示登录须知（每次进入提示一次）。
   Future<void> _showLoginTipsIfNeeded() async {
     if (_tipsShown || !mounted) return;
@@ -306,8 +375,12 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       else
         '1. 这里可以直接登录并使用教务系统网页，不会导入课表。',
       '2. 本软件不储存密码，仅自动填写学号，请手动输入密码。',
-      '3. 如果未连接校园网，请先登录 WebVPN，'
-          '再从 WebVPN 功能页进入教务系统后登录教务系统。',
+      if (!_profile.hasCampusNetwork)
+        '3. WebVPN 的滑块验证会尝试自动完成，失败时可手动拖动。'
+      else
+        '3. 如遇验证码请手动输入。',
+      if (!_profile.hasCampusNetwork)
+        '4. 登录 WebVPN 后，请从功能页进入教务系统再登录。',
     ];
 
     await showDialog<void>(

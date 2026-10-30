@@ -21,7 +21,9 @@
 采用与 [拾光课程表](https://github.com/ShiGuangSchedule/shiguangschedule) 相同的方式：
 
 1. App 内嵌 WebView 打开教务登录页（校外走 WebVPN，校内可直连）；
-2. 用户自行完成登录（**图形验证码手动填写**，WebVPN 滑块人工拖动）；
+2. 用户自行完成登录（密码手动输入；WebVPN 的滑块验证由内置求解脚本
+   `assets/js/webvpn_captcha_solver.js` 自动完成，失败可手动拖动，
+   教务图形验证码手动填写）；
 3. 登录后 App 向页面注入 **shiguang_warehouse 上游 ZQU 适配脚本原文**
    （`assets/js/zqu_upstream.js`，Apache-2.0）＋ 一层桥接 shim
    （`assets/js/shiguang_bridge_shim.js`，只把官方的弹窗/保存调用映射到 Flutter，
