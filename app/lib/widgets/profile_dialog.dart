@@ -128,10 +128,16 @@ class _ProfileDialogState extends State<_ProfileDialog> {
                           ),
                         ),
                       ),
-                      child: RadioListTile<String>(
-                        value: t,
-                        dense: true,
-                        title: Text(t),
+                      child: Material(
+                        // ListTile 的背景/水波纹画在最近的 Material 上，
+                        // 需要自己的 Material，避免被外层带背景色的
+                        // DecoratedBox 遮挡（否则触发调试断言）。
+                        type: MaterialType.transparency,
+                        child: RadioListTile<String>(
+                          value: t,
+                          dense: true,
+                          title: Text(t),
+                        ),
                       ),
                     ),
                 ],
