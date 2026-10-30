@@ -106,27 +106,48 @@ class _ProfileDialogState extends State<_ProfileDialog> {
 
             Text('学期', style: theme.textTheme.labelLarge),
             const SizedBox(height: 6),
-            SegmentedButton<String>(
-              segments: [
-                for (final t in kTermOptions)
-                  ButtonSegment<String>(value: t, label: Text(t)),
-              ],
-              selected: {_term},
-              onSelectionChanged: (s) => setState(() => _term = s.first),
-            ),
-            const SizedBox(height: 16),
-
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _hasCampus,
-              onChanged: (v) => setState(() => _hasCampus = v),
-              title: Text(_hasCampus ? '已购校园网' : '未购校园网'),
-              subtitle: Text(
-                _hasCampus
-                    ? '登录时直接访问 jwgl.zqu.edu.cn'
-                    : '登录时先走 webvpn-free.zqu.edu.cn',
-                style: theme.textTheme.bodySmall,
+            RadioGroup<String>(
+              groupValue: _term,
+              onChanged: (v) => setState(() => _term = v ?? _term),
+              child: Column(
+                children: [
+                  for (final t in kTermOptions)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: ShapeDecoration(
+                        color: _term == t
+                            ? theme.colorScheme.primary.withValues(alpha: 0.08)
+                            : null,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(
+                            color: _term == t
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.outlineVariant,
+                            width: _term == t ? 1.5 : 1,
+                          ),
+                        ),
+                      ),
+                      child: RadioListTile<String>(
+                        value: t,
+                        dense: true,
+                        title: Text(t),
+                      ),
+                    ),
+                ],
               ),
+            ),
+            const SizedBox(height: 8),
+
+            Text('校园网', style: theme.textTheme.labelLarge),
+            const SizedBox(height: 6),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment<bool>(value: true, label: Text('已购校园网')),
+                ButtonSegment<bool>(value: false, label: Text('未购校园网')),
+              ],
+              selected: {_hasCampus},
+              onSelectionChanged: (s) => setState(() => _hasCampus = s.first),
             ),
           ],
         ),

@@ -193,7 +193,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       return;
     }
 
-    // 脚本需要用户输入（选学期 / 确认开学日期），弹窗后回填结果
+    // 脚本需要输入（选学期 / 确认开学日期），自动应答后回填结果
     if (msg.type == 'request') {
       _handleRequest(msg);
       return;
@@ -334,9 +334,13 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     );
   }
 
-  // ---------------------------------------------------- 脚本请求（弹窗交互）
+  // ---------------------------------------------------- 脚本请求（自动应答）
 
   /// 处理脚本发来的用户输入请求：选学期 / 确认开学日期。
+  ///
+  /// 不再弹窗，直接自动应答：
+  ///   - 学期：优先用个人信息里选的学期，其次用脚本给的默认索引；
+  ///   - 开学日期：直接采用脚本默认返回的日期（无效时留空，交给落库兜底）。
   Future<void> _handleRequest(JwglBridgeMessage msg) async {
     final j = msg.json ?? const <String, dynamic>{};
     final reqId = (j['requestId'] ?? '').toString();
@@ -349,15 +353,25 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       final items = ((payload['items'] as List?) ?? [])
           .map((e) => e.toString())
           .toList();
-      // 默认选中：优先用个人信息里选的学期，其次用脚本给的默认索引
+      // 自动选择：优先用个人信息里选的学期，其次用脚本给的默认索引
       var def = (payload['defaultIndex'] as num?)?.toInt() ?? 0;
-      final want = _profile.term.trim();
-      final hit = items.indexOf(want);
+      final hit = items.indexOf(_profile.term.trim());
       if (hit >= 0) def = hit;
-      value = await _pickTerm(items, def);
+      if (def < 0) def = 0;
+      if (items.isNotEmpty && def >= items.length) def = items.length - 1;
+      if (items.isNotEmpty) {
+        _accTermName = items[def];
+        setState(() => _status = '已自动选择学期：$_accTermName');
+      }
+      value = def;
     } else if (reqType == 'startDate') {
-      final def = (payload['defaultText'] ?? '').toString();
-      value = await _pickStartDate(def);
+      // 自动确认：直接采用脚本默认返回的开学日期
+      final def = (payload['defaultText'] ?? '').toString().trim();
+      final valid = RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(def);
+      value = valid ? def : '';
+      if (valid) {
+        setState(() => _status = '已自动确认开学日期：$def');
+      }
     }
 
     await _resolveRequest(reqId, value);
@@ -374,81 +388,6 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     } catch (_) {
       /* 页面已跳走时忽略 */
     }
-  }
-
-  /// 选学期弹窗，返回索引；取消返回 null。
-  Future<int?> _pickTerm(List<String> items, int defaultIndex) async {
-    if (items.isEmpty) return defaultIndex;
-    final picked = await showDialog<int>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        var selected = (defaultIndex >= 0 && defaultIndex < items.length)
-            ? defaultIndex
-            : 0;
-        return StatefulBuilder(
-          builder: (ctx, setLocal) => AlertDialog(
-            title: const Text('选择学期'),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: RadioGroup<int>(
-                groupValue: selected,
-                onChanged: (v) => setLocal(() => selected = v ?? selected),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: items.length,
-                  itemBuilder: (_, i) => RadioListTile<int>(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    value: i,
-                    title: Text(items[i]),
-                  ),
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(ctx).pop(selected),
-                child: const Text('确定'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-    if (picked != null && picked >= 0 && picked < items.length) {
-      // 学期名取用户选中的那一项（不要再用网页标题）
-      _accTermName = items[picked];
-    }
-    return picked;
-  }
-
-  /// 确认开学日期，返回 yyyy-MM-dd；取消返回 null。
-  Future<String?> _pickStartDate(String defaultText) async {
-    DateTime initial;
-    try {
-      initial = DateTime.parse(defaultText);
-    } catch (_) {
-      initial = DateTime.now();
-    }
-
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(initial.year - 2),
-      lastDate: DateTime(initial.year + 2),
-      helpText: '选择本学期第 1 周的周一',
-      cancelText: '取消',
-      confirmText: '确定',
-    );
-    if (picked == null) return null;
-    return '${picked.year.toString().padLeft(4, '0')}-'
-        '${picked.month.toString().padLeft(2, '0')}-'
-        '${picked.day.toString().padLeft(2, '0')}';
   }
 
   /// 官方脚本跑完（done）：把累积到的三段数据组装成课表并落库。
