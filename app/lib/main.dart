@@ -10,6 +10,7 @@ import 'pages/home_page.dart';
 import 'pages/jwgl_login_page.dart';
 import 'pages/mine_page.dart';
 import 'pages/timetable_page.dart';
+import 'pages/utility_page.dart';
 import 'services/profile_repository.dart';
 import 'widgets/profile_dialog.dart';
 
@@ -32,6 +33,7 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
       routes: {
         '/timetable': (ctx) => const TimetablePage(),
         '/jwgl': (ctx) => const JwglLoginPage(),
+        '/utility': (ctx) => const UtilityPage(),
       },
     );
   }

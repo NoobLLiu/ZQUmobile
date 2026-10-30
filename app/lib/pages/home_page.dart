@@ -71,6 +71,12 @@ class HomePageState extends State<HomePage> {
         icon: Icons.school_outlined,
         route: '/jwgl',
       ),
+      const HomeFeature(
+        title: '水电费查询',
+        subtitle: '宿舍水电余额一键查看，本地缓存秒开',
+        icon: Icons.water_drop_outlined,
+        route: '/utility',
+      ),
     ];
 
     return Scaffold(
