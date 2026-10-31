@@ -5,25 +5,30 @@
 /// - 底部一条操作栏：左侧引导文字，右侧「执行导入」按钮；
 /// - 加载进度以细进度条浮在 WebView 顶部。
 ///
+/// 打开本页即进入**自动登录**：盖一层「自动登录中」的小弹窗，
+/// 由注入的 assets/js/auto_login.js 代填账号密码、点登录、推进到教务主页：
+///   WebVPN 登录页（滑块由 webvpn_captcha_solver.js 自动完成）
+///   → WebVPN 首页（自动点「教务系统」入口）
+///   → 教务系统登录页（账号密码代填；图形验证码在弹窗里输入一次）
+///   → 教务系统主页（弹窗收起，提示已登录）。
+///
 /// 取数逻辑**直接使用 shiguang_warehouse 上游的 ZQU 适配脚本原文**
 /// （assets/js/zqu_upstream.js），本 App 只提供一个桥接 shim
 /// （assets/js/shiguang_bridge_shim.js）把它的 showAlert / saveImportedCourses
 /// 等调用映射到 Flutter。
-///
-/// 官方脚本按「课程 → 学期配置 → 作息时间 → 完成」分四次回传，
-/// 这里逐段累积，收到 done 后一次性组装并落库，任何一段都不会丢。
-///
-/// WebVPN 的滑块验证码由注入的求解脚本（assets/js/webvpn_captcha_solver.js）
-/// 自动完成：识别缺口位置并合成拖动，失败自动换图重试，超过次数交还用户。
 library;
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/profile.dart';
 import '../models/timetable.dart';
+import '../services/captcha_ocr.dart';
+import '../services/captcha_templates.dart';
 import '../services/jwgl_adapter_repository.dart';
 import '../services/profile_repository.dart';
 import '../services/jwgl_service.dart';
@@ -34,7 +39,7 @@ import '../widgets/conflict_dialog.dart';
 ///
 /// 两种用法：
 ///   - 纯登录（[allowImport] = false）：从首页「教务系统」进入，
-///     只做快捷访问与自动填学号，不提供导入功能；
+///     只做快捷访问与自动登录，不提供导入功能；
 ///   - 导入模式（[allowImport] = true）：从课表页进入，
 ///     底部提供「执行导入」抓取课表。
 class JwglLoginPage extends StatefulWidget {
@@ -57,6 +62,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   /// WebVPN 滑块验证码自动求解脚本。
   String? _captchaSolverJs;
 
+  /// 自动登录编排脚本。
+  String? _autoLoginJs;
+
   /// 已购校园网：校内直连教务系统。
   static const String campusUrl = 'https://jwgl.zqu.edu.cn/';
 
@@ -67,17 +75,55 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   bool _loadingPage = true;
   bool _fetching = false;
   String _pageTitle = '教务系统';
-  String _status = '请在下方网页中登录教务系统（滑块验证将自动完成）';
+  String _status = '正在自动登录 ...';
   String? _error;
 
-  /// 通用个人信息（学号 / 学期 / 校园网）。
+  /// 通用个人信息（学号 / 两套密码 / 学期 / 校园网）。
   Profile _profile = const Profile();
-
-  /// 登录须知是否已提示过（每次进入页面提示一次）。
-  bool _tipsShown = false;
 
   /// 注入脚本后等待回传的令牌，用于兜底「点了没反应」。
   int _fetchToken = 0;
+
+  // ---- 自动登录状态 ----
+  /// 「自动登录中」弹窗是否显示。
+  bool _autoVisible = true;
+
+  /// 弹窗是否挡住网页（true 时盖一层深色蒙层；false 时只浮一个卡片）。
+  bool _autoBlocking = true;
+
+  /// 弹窗里的当前步骤文案。
+  String _autoStep = '正在准备登录 ...';
+
+  /// 是否正在等用户输入图形验证码。
+  bool _autoCaptcha = false;
+
+  /// 验证码图片（由页面内 canvas 转成 dataURL 回传）。
+  Uint8List? _captchaBytes;
+
+  /// 验证码位数（按图片宽度推算），输满即自动提交。
+  int _captchaExpected = 0;
+
+  /// 离线识别器的训练样本（登录时用来代填验证码；为空则走手动输入）。
+  CaptchaTemplates _templates = CaptchaTemplates();
+
+  /// 本轮登录已用识别结果自动提交过几次（防止瞎猜把账号试到锁定）。
+  int _ocrAttempts = 0;
+
+  /// 一次登录流程里最多自动提交几次识别结果。
+  static const int _maxOcrAttempts = 2;
+
+  /// 验证码识别的辅助提示（识别没把握时提示已填入的内容）。
+  String? _ocrHint;
+
+  /// 待确认的验证码：登录成功时把它当作带标签样本收进模板。
+  Uint8List? _pendingCaptchaBytes;
+  String _pendingCaptchaText = '';
+
+  /// 教务登录已提交：提交后页面跳走即视为成功（失败只弹窗、不跳转）。
+  bool _submittedJwgl = false;
+
+  final TextEditingController _captchaCtrl = TextEditingController();
+  Timer? _autoSlowTimer;
 
   // ---- 官方脚本分段落库的累积区 ----
   List<Course>? _accCourses;
@@ -95,11 +141,21 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     _init();
   }
 
+  @override
+  void dispose() {
+    _autoSlowTimer?.cancel();
+    _captchaCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _init() async {
     // 适配脚本以文件形式内置在项目里，随应用发布，不做运行时下载
     final injectable = await JwglAdapterRepository.loadInjectable();
     final solver = await JwglAdapterRepository.loadCaptchaSolver();
+    final autoLogin = await JwglAdapterRepository.loadAutoLogin();
     final profile = await ProfileRepository.load();
+    // 训练页攒下的字形样本：有就代填验证码，没有就完全走手动
+    final templates = await CaptchaTemplateRepository.load();
     if (!mounted) return;
 
     // 入口由「是否已购校园网」决定
@@ -108,7 +164,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     setState(() {
       _injectJs = injectable;
       _captchaSolverJs = solver;
+      _autoLoginJs = autoLogin;
       _profile = profile;
+      _templates = templates;
     });
 
     final controller = WebViewController()
@@ -137,10 +195,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
               if (!mounted || t == null || t.isEmpty) return;
               setState(() => _pageTitle = t);
             });
-            // 每次页面加载完成都尝试填入学号（登录页、WebVPN 页各有一处输入框）
-            _autofillStudentId();
-            // 同时挂上滑块验证码求解器（脚本自带轮询与幂等，重复注入无害）
+            // 每次页面加载完成：挂滑块求解器，再跑一遍自动登录编排
             _injectCaptchaSolver();
+            _startAutoLogin();
           },
           onWebResourceError: (err) {
             if (!mounted) return;
@@ -160,9 +217,13 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     if (!mounted) return;
     setState(() => _controller = controller);
 
-    // 打开页面即提示登录须知
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _showLoginTipsIfNeeded();
+    // 兜底：45 秒还没跑完就不要一直挡着网页
+    _autoSlowTimer = Timer(const Duration(seconds: 45), () {
+      if (!mounted || !_autoVisible) return;
+      setState(() {
+        _autoBlocking = false;
+        _autoStep = '自动登录耗时较长，可直接在页面上操作';
+      });
     });
   }
 
@@ -177,13 +238,29 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     });
   }
 
+  /// 只看消息类型，避免不同类型的回传进入导入协议解析。
+  String? _peekBridgeType(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return (decoded['type'] ?? '').toString();
+      }
+    } on FormatException {
+      /* 忽略 */
+    }
+    return null;
+  }
+
   void _onBridgeMessage(String raw) {
     if (!mounted) return;
 
-    // 滑块求解器的进度回传（独立类型，不进入导入协议的解析）
-    final preliminaryType = _peekBridgeType(raw);
-    if (preliminaryType == 'captcha') {
+    final type = _peekBridgeType(raw);
+    if (type == 'captcha') {
       _onCaptchaMessage(raw);
+      return;
+    }
+    if (type == 'autologin') {
+      _onAutoMessage(raw);
       return;
     }
 
@@ -265,21 +342,132 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     }
   }
 
-  // ---------------------------------------------------- 滑块验证码回传
+  // ---------------------------------------------------- 自动登录回传
 
-  /// 只看消息类型，不做完整解析（避免 captcha 消息进入导入协议）。
-  String? _peekBridgeType(String raw) {
+  void _onAutoMessage(String raw) {
+    Map<String, dynamic>? j;
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        return (decoded['type'] ?? '').toString();
-      }
+      if (decoded is Map<String, dynamic>) j = decoded;
     } on FormatException {
-      /* 忽略 */
+      return;
     }
-    return null;
+    if (j == null) return;
+
+    final state = (j['state'] ?? '').toString();
+    final message = (j['message'] ?? '').toString();
+
+    switch (state) {
+      case 'progress':
+      case 'submitting':
+      case 'slider':
+      case 'entering-jwgl':
+        setState(() {
+          if (message.isNotEmpty) _autoStep = message;
+          _autoCaptcha = false;
+          _status = message.isNotEmpty ? message : _status;
+        });
+        return;
+
+      case 'submitted':
+      case 'jwgl-ok':
+        // 教务登录已提交/已通过：之后页面跳走就算成功
+        _submittedJwgl = true;
+        setState(() {
+          _autoStep = message.isNotEmpty ? message : '正在登录教务系统 ...';
+          _autoCaptcha = false;
+        });
+        if (state == 'jwgl-ok') _harvestConfirmedCaptcha();
+        return;
+
+      case 'captcha':
+        final bytes = _decodeDataUrl(j['image']);
+        final expected = (j['expected'] as num?)?.toInt() ?? 0;
+        setState(() {
+          _autoStep = message.isNotEmpty ? message : '请输入图中验证码';
+          _autoCaptcha = true;
+          _autoBlocking = true;
+          _captchaBytes = bytes;
+          _captchaExpected = expected;
+          _ocrHint = null;
+        });
+        // 有训练样本就试一次离线识别；没把握则保留输入框
+        if (bytes != null) _tryOcr(bytes, expected);
+        return;
+
+      case 'need-help':
+        // 需要用户自己点一下入口：放开蒙层，但保留提示卡片
+        setState(() {
+          _autoStep = message.isNotEmpty ? message : '请在页面上点一下入口';
+          _autoBlocking = false;
+        });
+        return;
+
+      case 'done':
+        _finishAutoLogin(message);
+        return;
+
+      case 'failed':
+        _stopAutoLogin(
+          message.isNotEmpty ? message : '自动登录失败，请手动操作',
+          showError: true,
+        );
+        return;
+    }
   }
 
+  Uint8List? _decodeDataUrl(Object? value) {
+    final s = (value ?? '').toString();
+    final i = s.indexOf(',');
+    if (i < 0) return null;
+    try {
+      return base64Decode(s.substring(i + 1));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 试一次离线识别。
+  ///
+  /// 三道闸门，任何一道不过就退回手动输入（避免瞎猜）：
+  ///   1. 有训练样本；
+  ///   2. 能稳定切出 4~6 个字，且位数与图片宽度推算的一致；
+  ///   3. 每个字的置信度与区分度都过关（[CaptchaOcr.minScore] / [CaptchaOcr.minMargin]）。
+  void _tryOcr(Uint8List bytes, int expected) {
+    if (_templates.isEmpty) return;
+    if (_ocrAttempts >= _maxOcrAttempts) {
+      setState(() => _ocrHint = '已自动尝试 $_maxOcrAttempts 次，请手动输入');
+      return;
+    }
+
+    final pred = CaptchaOcr.predict(bytes, _templates);
+    if (pred == null) {
+      setState(() => _ocrHint = '验证码切字失败，请手动输入');
+      return;
+    }
+
+    final lengthOk = expected <= 0 || pred.text.length == expected;
+    if (pred.ok && lengthOk) {
+      _ocrAttempts++;
+      setState(() {
+        _autoCaptcha = false;
+        _autoStep = '已识别「${pred.text}」，正在登录 ...';
+      });
+      _submitCaptchaText(pred.text);
+      return;
+    }
+
+    // 识别没把握：把猜测填进输入框，用户核对一下就能提交
+    if (lengthOk && pred.text.isNotEmpty && !pred.text.contains('?')) {
+      _captchaCtrl.text = pred.text;
+    }
+    setState(() {
+      _ocrHint = '自动识别没把握（${pred.reason ?? '位数不符'}）'
+          '${_captchaCtrl.text.isEmpty ? '' : '，已填入猜测值请核对'}';
+    });
+  }
+
+  /// 滑块求解器的进度回传（来自 webvpn_captcha_solver.js，独立类型）。
   void _onCaptchaMessage(String raw) {
     Map<String, dynamic>? j;
     try {
@@ -292,61 +480,133 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     final state = (j['state'] ?? '').toString();
     final message = (j['message'] ?? '').toString();
     if (message.isEmpty) return;
+
     setState(() {
-      if (state == 'solved') {
-        _error = null;
-      } else if (state == 'failed') {
-        // 交还用户手动处理，不算导入失败
+      _status = message;
+      // 弹窗在的时候把滑块进度也显示在弹窗里
+      if (_autoVisible && !_autoCaptcha) _autoStep = message;
+      if (state == 'solved') _error = null;
+      if (state == 'failed') {
+        // 自动验证失败：放开蒙层，用户可以手动拖动
+        _autoBlocking = false;
       }
+    });
+  }
+
+  void _finishAutoLogin(String message) {
+    _autoSlowTimer?.cancel();
+    setState(() {
+      _autoVisible = false;
+      _autoCaptcha = false;
+      _ocrHint = null;
+      _status = message.isNotEmpty ? message : '已登录教务系统';
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(message.isNotEmpty ? message : '已登录教务系统'),
+        duration: const Duration(seconds: 3),
+      ));
+  }
+
+  /// 停止自动登录：收起弹窗，把页面交还用户。
+  void _stopAutoLogin(String message, {bool showError = false}) {
+    _autoSlowTimer?.cancel();
+    _controller?.runJavaScript(
+      'window.__zsyAutoLogin && window.__zsyAutoLogin.stop();',
+    );
+    if (!mounted) return;
+    setState(() {
+      _autoVisible = false;
+      _autoCaptcha = false;
+      _ocrHint = null;
+      _captchaCtrl.clear();
+      if (showError) _error = message;
       _status = message;
     });
   }
 
-  // ---------------------------------------------------- 滑块验证码回传结束
-
-  // ---------------------------------------------------- 自动填学号 / 须知
-
-  /// 在页面里自动填入学号（不填密码）。
-  ///
-  /// 教务（URP）与 WebVPN（深信服）的登录框 id/name 各不相同，
-  /// 这里按常见命名逐个试；已填过内容的输入框不覆盖。
-  Future<void> _autofillStudentId() async {
-    final id = _profile.studentId.trim();
-    final c = _controller;
-    if (c == null || id.isEmpty) return;
-
-    final js =
-        '''
-(function (sid) {
-  var sels = [
-    '#yhm', 'input[name="yhm"]',
-    '#username', 'input[name="username"]',
-    '#userName', 'input[name="userName"]',
-    '#account', 'input[name="account"]',
-    '#loginName', 'input[name="loginName"]',
-    '#svpn_name', 'input[name="svpn_name"]'
-  ];
-  for (var i = 0; i < sels.length; i++) {
-    var el = null;
-    try { el = document.querySelector(sels[i]); } catch (e) { el = null; }
-    if (!el || el.disabled || el.readOnly) continue;
-    if (el.value) return 'skip';
-    el.focus();
-    el.value = sid;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.blur();
-    return 'ok';
-  }
-  return 'none';
-})(${jsonEncode(id)});
-''';
-    try {
-      await c.runJavaScript(js);
-    } catch (_) {
-      /* 页面还没就绪时忽略，下次加载会再试 */
+  /// 验证码输满位数即自动提交，省掉一次点击。
+  void _onCaptchaChanged(String value) {
+    if (!_autoCaptcha) return;
+    final expect = _captchaExpected;
+    if (expect > 0 && value.trim().length >= expect) {
+      _submitCaptcha();
     }
   }
+
+  /// 用户手动输入验证码后提交。
+  Future<void> _submitCaptcha() async {
+    final text = _captchaCtrl.text.trim();
+    if (text.isEmpty) return;
+    await _submitCaptchaText(text);
+  }
+
+  /// 把验证码交给页面回填并提交（手动输入与离线识别共用）。
+  Future<void> _submitCaptchaText(String text) async {
+    final c = _controller;
+    if (c == null) return;
+    // 记下「图 + 答案」，登录成功后就能当成带标签样本收录
+    _pendingCaptchaBytes = _captchaBytes;
+    _pendingCaptchaText = text.trim().toUpperCase();
+    setState(() {
+      _autoCaptcha = false;
+      _ocrHint = null;
+      _autoStep = '正在登录教务系统 ...';
+    });
+    try {
+      await c.runJavaScript(
+        'window.__zsyAutoLogin && window.__zsyAutoLogin.submitCaptcha('
+        '${jsonEncode(text)});',
+      );
+    } catch (_) {
+      /* 页面已跳走时忽略 */
+    }
+    _captchaCtrl.clear();
+  }
+
+  /// 教务回包 status=y 时，把刚才那张验证码连同答案收为训练样本。
+  ///
+  /// 这是零成本的样本回流：标签由教务自己确认，不会污染模板；
+  /// 对校外用户还有额外意义——直连取不到 `/yzm` 时，只能靠这条路攒样本。
+  Future<void> _harvestConfirmedCaptcha() async {
+    final bytes = _pendingCaptchaBytes;
+    final text = _pendingCaptchaText;
+    _pendingCaptchaBytes = null;
+    _pendingCaptchaText = '';
+    if (bytes == null || text.isEmpty) return;
+
+    final seg = CaptchaOcr.segment(bytes);
+    if (seg == null || seg.glyphs.length != text.length) return;
+    for (var i = 0; i < text.length; i++) {
+      _templates.add(text[i], seg.glyphs[i].pixels);
+    }
+    await CaptchaTemplateRepository.save(_templates);
+  }
+
+  /// 换一张验证码。
+  Future<void> _refreshCaptcha() async {
+    final c = _controller;
+    if (c == null) return;
+    _captchaCtrl.clear();
+    setState(() {
+      _autoCaptcha = true;
+      _ocrHint = null;
+      _autoStep = '正在获取新的验证码 ...';
+    });
+    try {
+      await c.runJavaScript(
+        'window.__zsyAutoLogin && window.__zsyAutoLogin.refreshCaptcha();',
+      );
+    } catch (_) {
+      /* 忽略 */
+    }
+  }
+
+  // ---------------------------------------------------- 自动登录回传结束
+
+  // ---------------------------------------------------- 脚本注入
 
   /// 注入滑块验证码求解器。
   ///
@@ -363,48 +623,39 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     }
   }
 
-  /// 打开页面时提示登录须知（每次进入提示一次）。
-  Future<void> _showLoginTipsIfNeeded() async {
-    if (_tipsShown || !mounted) return;
-    _tipsShown = true;
+  /// 注入自动登录编排脚本并启动。
+  ///
+  /// [expect] 告诉脚本「接下来该到哪个系统」：
+  ///   - webvpn：当前在外面，先登录 WebVPN，再想办法进教务；
+  ///   - jwgl：当前应该就是教务（校内直连，或已提交过教务登录）。
+  Future<void> _startAutoLogin() async {
+    final js = _autoLoginJs;
+    final c = _controller;
+    if (c == null || js == null || !_autoVisible) return;
 
-    final where = _profile.hasCampusNetwork ? '教务系统（校内直连）' : 'WebVPN';
-    final tips = <String>[
-      if (widget.allowImport)
-        '1. 请登录至教务系统主页，然后点击下方「执行导入」。'
-      else
-        '1. 这里可以直接登录并使用教务系统网页，不会导入课表。',
-      '2. 本软件不储存密码，仅自动填写学号，请手动输入密码。',
-      if (!_profile.hasCampusNetwork)
-        '3. WebVPN 的滑块验证会尝试自动完成，失败时可手动拖动。'
-      else
-        '3. 如遇验证码请手动输入。',
-      if (!_profile.hasCampusNetwork)
-        '4. 登录 WebVPN 后，请从功能页进入教务系统再登录。',
-    ];
+    // 每次页面加载都是新一轮登录：重置识别代填的尝试次数
+    _ocrAttempts = 0;
 
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('登录 $where'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (final t in tips) ...[
-              Text(t),
-              if (t != tips.last) const SizedBox(height: 10),
-            ],
-          ],
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('知道了'),
-          ),
-        ],
-      ),
-    );
+    final profile = _profile;
+    final expect = (profile.hasCampusNetwork || _submittedJwgl)
+        ? 'jwgl'
+        : 'webvpn';
+    final cfg = jsonEncode({
+      'sid': profile.studentId.trim(),
+      'jwglPwd': profile.jwglPassword,
+      'webvpnPwd': profile.webvpnPassword,
+      'expect': expect,
+      'submitted': _submittedJwgl,
+    });
+
+    try {
+      await c.runJavaScript(js);
+      await c.runJavaScript(
+        'window.__zsyAutoLogin && window.__zsyAutoLogin.start($cfg);',
+      );
+    } catch (_) {
+      /* 页面尚未就绪时忽略：下次加载会再跑 */
+    }
   }
 
   // ---------------------------------------------------- 脚本请求（自动应答）
@@ -573,6 +824,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     final js = _injectJs;
     if (controller == null || js == null || _fetching) return;
 
+    // 手动导入说明用户要自己接管，先停掉自动登录编排
+    if (_autoVisible) _stopAutoLogin('已切换为手动操作');
+
     final token = ++_fetchToken;
     _accCourses = null;
     _accSlots = null;
@@ -651,6 +905,151 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   }
 
   // ------------------------------------------------------------------ UI
+
+  /// 「自动登录中」弹窗：小卡片 + 转圈，正常状态下盖住下面的网页。
+  Widget _buildAutoOverlay(ThemeData theme) {
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          // 蒙层：遮挡时吃掉点击，不遮挡时透传
+          Positioned.fill(
+            child: _autoBlocking
+                ? const ColoredBox(color: Color(0x99000000))
+                : IgnorePointer(
+                    child: const ColoredBox(color: Color(0x22000000)),
+                  ),
+          ),
+          Align(
+            alignment: _autoBlocking
+                ? Alignment.center
+                : Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Material(
+                elevation: 8,
+                color: theme.colorScheme.surface,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  width: 300,
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            '自动登录中',
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _autoStep,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                      if (_autoCaptcha) ...[
+                        const SizedBox(height: 12),
+                        GestureDetector(
+                          onTap: _refreshCaptcha,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: theme.colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: _captchaBytes == null
+                                ? SizedBox(
+                                    height: 40,
+                                    width: 180,
+                                    child: Center(
+                                      child: Text(
+                                        '点此重新获取验证码',
+                                        style: theme.textTheme.bodySmall,
+                                      ),
+                                    ),
+                                  )
+                                : Image.memory(
+                                    _captchaBytes!,
+                                    height: 44,
+                                    fit: BoxFit.contain,
+                                    gaplessPlayback: true,
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        if (_ocrHint != null) ...[
+                          Text(
+                            _ocrHint!,
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                        ],
+                        TextField(
+                          controller: _captchaCtrl,
+                          autofocus: true,
+                          maxLength: _captchaExpected > 0 ? _captchaExpected : 8,
+                          textCapitalization: TextCapitalization.characters,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            letterSpacing: 4,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            counterText: '',
+                            hintText: '输入验证码',
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: _onCaptchaChanged,
+                          onSubmitted: (_) => _submitCaptcha(),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: _submitCaptcha,
+                            child: const Text('继续'),
+                          ),
+                        ),
+                      ],
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => _stopAutoLogin('已切换为手动操作'),
+                            child: const Text('改为手动'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -743,6 +1142,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
                       backgroundColor: Colors.transparent,
                     ),
                   ),
+                if (_autoVisible) _buildAutoOverlay(theme),
               ],
             ),
           ),
@@ -757,7 +1157,11 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
                 children: [
                   Expanded(
                     child: Text(
-                      _fetching ? _status : '登录到教务系统主页后，点击右侧「执行导入」',
+                      _fetching
+                          ? _status
+                          : (_autoVisible
+                              ? _autoStep
+                              : '登录到教务系统主页后，点击右侧「执行导入」'),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -767,7 +1171,10 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
                   ),
                   const SizedBox(width: 12),
                   FilledButton(
-                    onPressed: (!_ready || _fetching) ? null : _startImport,
+                    // 自动登录还盖着网页时不允许导入（此时还在登录页，抓不到数据）
+                    onPressed: (!_ready || _fetching || (_autoVisible && _autoBlocking))
+                        ? null
+                        : _startImport,
                     child: _fetching
                         ? const SizedBox(
                             width: 18,

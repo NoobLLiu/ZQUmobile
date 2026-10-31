@@ -6,9 +6,11 @@ import 'package:flutter/material.dart';
 import '../core/build_info.dart';
 import '../models/profile.dart';
 import '../models/timetable.dart';
+import '../services/captcha_templates.dart';
 import '../services/profile_repository.dart';
 import '../services/timetable_repository.dart';
 import '../widgets/profile_dialog.dart';
+import 'captcha_training_page.dart';
 
 /// 我的页面。
 class MinePage extends StatefulWidget {
@@ -25,6 +27,9 @@ class MinePageState extends State<MinePage> {
   /// 通用个人信息（学号 / 学期 / 是否已购校园网）。
   Profile _profile = const Profile();
 
+  /// 验证码识别训练样本。
+  CaptchaTemplates _templates = CaptchaTemplates();
+
   @override
   void initState() {
     super.initState();
@@ -34,10 +39,12 @@ class MinePageState extends State<MinePage> {
   Future<void> _load() async {
     final tt = await TimetableRepository.load();
     final profile = await ProfileRepository.load();
+    final templates = await CaptchaTemplateRepository.load();
     if (!mounted) return;
     setState(() {
       _tt = tt;
       _profile = profile;
+      _templates = templates;
     });
   }
 
@@ -52,6 +59,14 @@ class MinePageState extends State<MinePage> {
 
   /// 供外部在登录页返回后调用。
   void reload() => _load();
+
+  /// 打开验证码训练页，返回后刷新样本计数。
+  Future<void> _openTraining(BuildContext context) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const CaptchaTrainingPage()),
+    );
+    await _load();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -85,10 +100,28 @@ class MinePageState extends State<MinePage> {
             subtitle: _profile.hasCampusNetwork ? '已购（校内直连）' : '未购',
           ),
           _Tile(
+            icon: Icons.key_outlined,
+            title: '登录密码',
+            subtitle: _profile.isComplete
+                ? '教务 / WebVPN 密码已保存，登录时自动代填'
+                : '未保存完整，打开登录页无法自动登录',
+          ),
+          _Tile(
             icon: Icons.edit_outlined,
             title: '修改个人信息',
-            subtitle: '学号、学期、是否已购校园网',
+            subtitle: '学号、两套密码、学期、是否已购校园网',
             onTap: () => _editProfile(context),
+          ),
+
+          const _SectionTitle('验证码识别'),
+          _Tile(
+            icon: Icons.school_outlined,
+            title: '验证码训练',
+            subtitle: _templates.isEmpty
+                ? '未训练（登录时需手动输入验证码）'
+                : '已收集 ${_templates.sampleCount} 个字形样本，'
+                    '覆盖 ${_templates.classCount} 个字符',
+            onTap: () => _openTraining(context),
           ),
 
           const _SectionTitle('关于'),

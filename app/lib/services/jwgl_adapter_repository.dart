@@ -7,8 +7,10 @@
 /// 文件组成：
 ///   assets/js/zqu_upstream.js          —— shiguang_warehouse 上游 zqu_01.js 原文
 ///   assets/js/shiguang_bridge_shim.js  —— 把官方的 bridge 调用映射到本 App
+///   assets/js/webvpn_captcha_solver.js —— WebVPN 滑块验证码自动求解
+///   assets/js/auto_login.js            —— 代填账号密码 / 点登录 / 推进到教务主页
 ///
-/// 更新适配脚本的方式：替换这两个文件后重新构建发版。
+/// 更新适配脚本的方式：替换这些文件后重新构建发版。
 library;
 
 import 'package:flutter/services.dart';
@@ -23,9 +25,13 @@ class JwglAdapterRepository {
   /// WebVPN 滑块验证码自动求解脚本。
   static const String captchaSolverAsset = 'assets/js/webvpn_captcha_solver.js';
 
+  /// 自动登录编排脚本（代填账号密码 + 点登录 + 推进到教务主页）。
+  static const String autoLoginAsset = 'assets/js/auto_login.js';
+
   static String? _upstreamCache;
   static String? _shimCache;
   static String? _captchaSolverCache;
+  static String? _autoLoginCache;
 
   /// 读取内置的上游适配脚本原文。
   static Future<String> loadUpstream() async =>
@@ -41,6 +47,13 @@ class JwglAdapterRepository {
   /// 它会自动等待滑块弹窗出现，完成识别、拖动与重试。
   static Future<String> loadCaptchaSolver() async =>
       _captchaSolverCache ??= await rootBundle.loadString(captchaSolverAsset);
+
+  /// 读取自动登录编排脚本。
+  ///
+  /// 每次页面加载完成后注入一次：脚本按页面形态（WebVPN 登录页 /
+  /// 教务登录页 / 其他页）自行决定该填什么、点哪个按钮。
+  static Future<String> loadAutoLogin() async =>
+      _autoLoginCache ??= await rootBundle.loadString(autoLoginAsset);
 
   /// 拼出实际注入 WebView 的脚本：桥接 shim + 用 IIFE 包裹的上游脚本。
   ///

@@ -13,6 +13,8 @@ final String _completeProfile = jsonEncode({
   'studentId': '202301010101',
   'term': '2026-2027-1',
   'hasCampusNetwork': true,
+  'webvpnPassword': 'vpn-pass',
+  'jwglPassword': 'jwgl-pass',
 });
 
 void main() {
@@ -49,6 +51,24 @@ void main() {
     expect(find.text('个人资料'), findsOneWidget);
   });
 
+  testWidgets('「我的」里能进入验证码训练', (WidgetTester tester) async {
+    await tester.pumpWidget(const ZhangShangZhaoYuanApp());
+
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+
+    final entry = find.text('验证码训练');
+    await tester.dragUntilVisible(
+      entry,
+      find.byType(ListView),
+      const Offset(0, -80),
+    );
+    await tester.pumpAndSettle();
+    expect(entry, findsOneWidget);
+    // 还没训练过：副标题应说明需要手动输入
+    expect(find.textContaining('未训练'), findsOneWidget);
+  });
+
   testWidgets('个人信息不完整时会弹出填写引导', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
 
@@ -58,5 +78,15 @@ void main() {
 
     expect(find.text('个人信息'), findsOneWidget);
     expect(find.text('保存'), findsOneWidget);
+  });
+
+  testWidgets('个人信息弹窗要求分别填写教务与 WebVPN 密码', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const ZhangShangZhaoYuanApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('教务系统密码'), findsOneWidget);
+    expect(find.text('WebVPN 密码'), findsOneWidget);
   });
 }
