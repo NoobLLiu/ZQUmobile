@@ -8,6 +8,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:zhangshang_yanyuan/services/captcha_ocr.dart';
 import 'package:zhangshang_yanyuan/services/captcha_templates.dart';
 
@@ -55,6 +56,28 @@ void main() {
     test('不是图片的数据返回 null，不抛异常', () {
       final notImage = Uint8List.fromList(List.generate(64, (i) => i));
       expect(CaptchaOcr.segment(notImage), isNull);
+    });
+
+    test('按 85% 质量重编码（页面 canvas 回传的真实路径）不影响切字', () {
+      // auto_login.js 是把 <img> 画到 canvas 再 toDataURL('image/jpeg', 0.85)，
+      // 所以线上拿到的永远是二次编码过的图，这里守住这条路径。
+      for (final name in [
+        'c_007.jpg',
+        'c_013.jpg',
+        'c_034.jpg',
+        'c_048.jpg',
+        'c_062.jpg',
+      ]) {
+        final original = fixture(name);
+        final recoded = Uint8List.fromList(
+          img.encodeJpg(img.decodeJpg(original)!, quality: 85),
+        );
+        expect(
+          CaptchaOcr.segment(recoded)?.glyphs.length,
+          CaptchaOcr.segment(original)?.glyphs.length,
+          reason: name,
+        );
+      }
     });
 
     test('背景太花/字粘连的图宁可不切，也不硬凑字数', () {
