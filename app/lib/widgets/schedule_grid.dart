@@ -173,7 +173,16 @@ class ScheduleGrid extends StatelessWidget {
     return List.generate(7, (i) => first.add(Duration(days: i)));
   }
 
-  /// 构建该周的展示块，处理同一格多门课的并排显示。
+  /// 构建该周的展示块。
+  ///
+  /// 按天做「重叠簇 + 贪心分道」排版（对齐拾光课表 mergeCourses 的思路）：
+  /// 1. 当天课程按起始节次排序（同起始时长的优先占道）；
+  /// 2. 节次区间相交的课程聚成一个重叠簇（传递闭包）；
+  /// 3. 簇内贪心分配横向通道，保证互不遮挡；
+  ///    每道宽度 = 列宽 / 簇内通道数。
+  ///
+  /// 这样即使两门课起止节次不同、只是部分重叠（如 1-2 节与 2-3 节），
+  /// 也会并排成两列显示，而不是叠在一起只看到一节。
   List<_GridBlock> _buildBlocks(int week, int displayDays) {
     final active = <Course>[];
     final demoted = <Course>[];
@@ -202,39 +211,89 @@ class ScheduleGrid extends StatelessWidget {
 
     final result = <_GridBlock>[];
 
-    // 先按 (星期, 起始节) 分组，检测冲突
-    final groups = <String, List<Course>>{};
+    // 按天分组
+    final byDay = <int, List<Course>>{};
     for (final c in active) {
-      final key = '${c.day}_${c.startSection}';
-      groups.putIfAbsent(key, () => []).add(c);
+      byDay.putIfAbsent(c.day, () => []).add(c);
     }
 
-    for (final entry in groups.entries) {
-      final list = entry.value;
-      if (list.length == 1) {
-        result.add(_GridBlock(course: list.first, subColumnIndex: 0, subColumnCount: 1));
-      } else {
-        // 冲突：同一格内均分宽度
-        for (var i = 0; i < list.length; i++) {
+    for (final dayCourses in byDay.values) {
+      dayCourses.sort((a, b) {
+        final byStart = a.startSection.compareTo(b.startSection);
+        if (byStart != 0) return byStart;
+        // 同一起始节次时，长课先占道，避免短课把长课挤到后面
+        return (b.endSection - b.startSection)
+            .compareTo(a.endSection - a.startSection);
+      });
+
+      // 1) 重叠簇：区间相交（含端点）的课程归入同一簇，传递合并
+      final clusters = <List<Course>>[];
+      for (final c in dayCourses) {
+        List<Course>? hit;
+        for (final cluster in clusters) {
+          if (cluster.any((o) => _overlaps(c, o))) {
+            hit = cluster;
+            break;
+          }
+        }
+        if (hit == null) {
+          clusters.add(<Course>[c]);
+        } else {
+          hit.add(c);
+        }
+      }
+
+      // 2) 簇内贪心分道：上一道结束节次 < 本课起始节次才能复用
+      for (final cluster in clusters) {
+        final laneEnds = <int>[];
+        final laneOf = <Course, int>{};
+
+        for (final c in cluster) {
+          var lane = -1;
+          for (var i = 0; i < laneEnds.length; i++) {
+            if (laneEnds[i] < c.startSection) {
+              lane = i;
+              laneEnds[i] = c.endSection;
+              break;
+            }
+          }
+          if (lane == -1) {
+            lane = laneEnds.length;
+            laneEnds.add(c.endSection);
+          }
+          laneOf[c] = lane;
+        }
+
+        final laneCount = laneEnds.length;
+        for (final c in cluster) {
           result.add(_GridBlock(
-            course: list[i],
-            subColumnIndex: i,
-            subColumnCount: list.length,
+            course: c,
+            subColumnIndex: laneOf[c]!,
+            subColumnCount: laneCount,
           ));
         }
       }
     }
 
-    // 灰化课程只在同格无其他课时显示，避免遮挡
-    final activeKeys = groups.keys.toSet();
+    // 灰化课程：与本周任意活跃课程重叠时不再占位，避免遮挡
     for (final c in demoted) {
-      final key = '${c.day}_${c.startSection}';
-      if (activeKeys.contains(key)) continue;
-      result.add(_GridBlock(course: c, subColumnIndex: 0, subColumnCount: 1, isVisualDemoted: true));
+      final overlapsActive =
+          active.any((a) => a.day == c.day && _overlaps(a, c));
+      if (overlapsActive) continue;
+      result.add(_GridBlock(
+        course: c,
+        subColumnIndex: 0,
+        subColumnCount: 1,
+        isVisualDemoted: true,
+      ));
     }
 
     return result;
   }
+
+  /// 两门课是否节次区间相交（含端点，即共享至少一节）。
+  static bool _overlaps(Course a, Course b) =>
+      a.startSection <= b.endSection && b.startSection <= a.endSection;
 }
 
 /// 网格中一个展示块。
