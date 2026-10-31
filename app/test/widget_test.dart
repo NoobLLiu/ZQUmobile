@@ -22,6 +22,8 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({
       'zsy_profile': _completeProfile,
+      // 默认当作已看过使用示例，免得每次进通知转写页都被弹窗挡住
+      'zsy_notice_guide_seen': true,
     });
   });
 
@@ -115,6 +117,45 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(notice, findsOneWidget);
+  });
+
+  testWidgets('首次进入通知转写会弹出使用示例，之后不再打扰',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('使用示例'), findsOneWidget);
+    // 示例图与文字说明都要在
+    expect(find.byType(Image), findsWidgets);
+    expect(find.textContaining('粘进「① 原通知」'), findsOneWidget);
+    expect(find.text('填入示例'), findsOneWidget);
+
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+    expect(find.text('使用示例'), findsNothing);
+
+    // 再进一次不该再弹
+    await tester.pumpWidget(
+      const MaterialApp(home: NoticeRewritePage(key: ValueKey('second'))),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('使用示例'), findsNothing);
+  });
+
+  testWidgets('示例能一键填进表单', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('使用示例'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('填入示例'));
+    await tester.pumpAndSettle();
+
+    // 原通知、来源、问好对象都被填好，用户可以直接点开始转写
+    expect(find.textContaining('挑战杯'), findsWidgets);
+    expect(find.textContaining('整句问候：法学5班的同学们下午好'), findsOneWidget);
   });
 
   testWidgets('个人信息不完整时会弹出填写引导', (WidgetTester tester) async {

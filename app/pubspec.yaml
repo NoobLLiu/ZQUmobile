@@ -23,6 +23,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/images/
     - assets/js/shiguang_bridge_shim.js
     - assets/js/zqu_upstream.js
     - assets/js/webvpn_captcha_solver.js

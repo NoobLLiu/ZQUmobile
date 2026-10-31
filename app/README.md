@@ -84,6 +84,12 @@
 （`lib/services/notice_rewrite_prompt.dart`，与 skill 规则一字不差），
 页面上只让用户选有限几项，其余交给规则：
 
+> **使用示例**：第一次进页面会自动弹一次（前后对照图 + 三步说明），
+> 之后点标题栏的 `?` 随时再看；弹窗里的「填入示例」可以把示例原文和选项一键填好，
+> 不想自己编内容时直接点「开始转写」就能看到效果。
+> 示例图由 `tool/example_figure.html` 经 Edge 无头模式截图生成
+> （`assets/images/notice_example.png`），改文案后重截即可。
+
 | 选项 | 作用 |
 |---|---|
 | 消息来源 | 决定标题行：【转发（辅导员）关于xx的通知】/【转发关于xx的通知】/【关于xx的通知】 |
@@ -183,9 +189,11 @@ app/
 │   │   ├── timetable_page.dart   # 课表页
 │   │   └── jwgl_login_page.dart  # 教务系统 WebView 登录与导入
 │   └── widgets/schedule_grid.dart # 拾光风格课表网格
-├── assets/js/
-│   ├── zqu_upstream.js           # shiguang_warehouse 上游 ZQU 适配脚本（原文）
-│   └── shiguang_bridge_shim.js   # 把官方 bridge 调用映射到 Flutter 的适配层
+├── assets/
+│   ├── images/notice_example.png  # 通知转写前后对照示例图
+│   └── js/
+│       ├── zqu_upstream.js         # shiguang_warehouse 上游 ZQU 适配脚本（原文）
+│       └── shiguang_bridge_shim.js # 把官方 bridge 调用映射到 Flutter 的适配层
 └── test/                         # 解析逻辑与界面冒烟测试
 ```
 

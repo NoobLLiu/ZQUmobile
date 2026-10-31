@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>通知转写 · 示例图</title>
+<style>
+  /* 由 Edge 无头模式截图生成，随 App 打包为 assets/images/notice_example.png
+     版式刻意压扁：让「图 + 三步说明」能在一屏弹窗里同时看到。
+     改文案后重新截图：
+     msedge --headless=new --disable-gpu --hide-scrollbars \
+       --window-size=1080,1040 \
+       --screenshot=assets/images/notice_example.png tool/example_figure.html */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1080px; height: 1040px;
+    background: #f2f3f7;
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: #23272f;
+    display: flex; flex-direction: column;
+    justify-content: center;
+    padding: 34px 40px;
+  }
+  .block { width: 100%; }
+  .label {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 29px; font-weight: 700; color: #4a5060;
+    margin: 0 0 14px 4px;
+  }
+  .label .dot { width: 11px; height: 34px; border-radius: 6px; background: #73caf8; }
+  .bubble {
+    border-radius: 26px; padding: 26px 32px;
+    font-size: 36px; line-height: 1.5;
+  }
+  .in {
+    background: #fff;
+    box-shadow: 0 6px 22px rgba(30,40,90,.06);
+    border-radius: 6px 26px 26px 26px;
+  }
+  .out {
+    background: #95ec69;
+    border-radius: 26px 6px 26px 26px;
+    box-shadow: 0 6px 22px rgba(40,120,40,.10);
+  }
+  .title-line { font-weight: 700; }
+  .ind { display: block; padding-left: 2em; }
+  .nw { white-space: nowrap; }
+  .arrow { display: flex; align-items: center; gap: 18px; padding: 24px 0; }
+  .arrow .line {
+    flex: 1; height: 2px;
+    background: repeating-linear-gradient(90deg,#cfd4e2 0 13px,transparent 13px 24px);
+  }
+  .arrow .badge {
+    display: flex; align-items: center;
+    padding: 11px 26px; border-radius: 999px;
+    background: #e6f4fe; color: #1f7fb8;
+    font-size: 27px; font-weight: 700; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+  <div class="block">
+    <div class="label"><span class="dot"></span>① 班委群里收到的通知</div>
+    <div class="bubble in">各位带班下午好，现有一则“挑战杯”赛事的通知<br>
+①电子版材料提交截止时间延长至10月24日21点前。<br>
+②负责人需在10月17日18点前填写报名表单。<br>
+请各位带班及时转发到新生群，收到请回复，谢谢<span class="nw">[玫瑰][玫瑰]</span></div>
+  </div>
+
+  <div class="arrow">
+    <span class="line"></span>
+    <span class="badge">AI 转写 · 换称谓 / 改“转发” / 补排版</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="block">
+    <div class="label"><span class="dot"></span>② 复制到班级群的结果</div>
+    <div class="bubble out"><span class="title-line">【转发（辅导员）关于“挑战杯”赛事的通知】</span>
+<span class="ind">法学5班的同学们下午好<span class="nw">[太阳]</span></span>
+<span class="ind">现有一则“挑战杯”赛事的通知</span>
+①电子版材料提交截止时间延长至10月24日21点前。<br>
+②负责人需在10月17日18点前填写报名表单。
+<span class="ind">同学们仔细阅读通知，积极参与呀<span class="nw">[转圈]</span></span></div>
+  </div>
+</body>
+</html>

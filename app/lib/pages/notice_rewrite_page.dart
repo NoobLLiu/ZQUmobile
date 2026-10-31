@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 
 import '../services/deepseek_client.dart';
 import '../services/notice_rewrite_prompt.dart';
+import '../widgets/notice_guide_dialog.dart';
 
 /// 通知转写页。
 class NoticeRewritePage extends StatefulWidget {
@@ -60,6 +61,33 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
     _originalController.addListener(_onInputChanged);
     _sourceController.addListener(_onInputChanged);
     _deadlineController.addListener(_onInputChanged);
+    // 第一次进来先看一次示例；看过就不再打扰
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowGuide());
+  }
+
+  /// 首次打开自动弹示例。
+  Future<void> _maybeShowGuide() async {
+    if (await hasSeenNoticeGuide()) return;
+    if (!mounted) return;
+    await markNoticeGuideSeen();
+    if (!mounted) return;
+    await showNoticeGuideDialog(context, onFillSample: _fillSample);
+  }
+
+  /// 把示例一键填进表单，用户可以立刻点「开始转写」看效果。
+  void _fillSample() {
+    if (!mounted) return;
+    setState(() {
+      _originalController.text = kNoticeSampleOriginal;
+      _sourceModeIndex = kNoticeSampleSourceMode;
+      _sourceController.text = kNoticeSampleSource;
+      _greetingIndex = kNoticeSampleGreeting;
+      _targetIndex = kNoticeSampleTarget;
+      _deadlineModeIndex = 0;
+      _deadlineController.clear();
+      _result = '';
+      _error = null;
+    });
   }
 
   @override
@@ -227,6 +255,13 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
       appBar: AppBar(
         title: const Text('通知转写'),
         actions: [
+          IconButton(
+            tooltip: '使用示例',
+            onPressed: _generating
+                ? null
+                : () => showNoticeGuideDialog(context, onFillSample: _fillSample),
+            icon: const Icon(Icons.help_outline),
+          ),
           IconButton(
             tooltip: '清空',
             onPressed: _generating
