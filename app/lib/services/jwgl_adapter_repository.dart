@@ -20,8 +20,12 @@ class JwglAdapterRepository {
   static const String bundledAsset = 'assets/js/zqu_upstream.js';
   static const String shimAsset = 'assets/js/shiguang_bridge_shim.js';
 
+  /// WebVPN 滑块验证码自动求解脚本。
+  static const String captchaSolverAsset = 'assets/js/webvpn_captcha_solver.js';
+
   static String? _upstreamCache;
   static String? _shimCache;
+  static String? _captchaSolverCache;
 
   /// 读取内置的上游适配脚本原文。
   static Future<String> loadUpstream() async =>
@@ -30,6 +34,13 @@ class JwglAdapterRepository {
   /// 读取桥接层脚本。
   static Future<String> loadShim() async =>
       _shimCache ??= await rootBundle.loadString(shimAsset);
+
+  /// 读取 WebVPN 滑块验证码求解脚本。
+  ///
+  /// 脚本自带幂等与轮询逻辑，页面每次加载完成后注入一次即可：
+  /// 它会自动等待滑块弹窗出现，完成识别、拖动与重试。
+  static Future<String> loadCaptchaSolver() async =>
+      _captchaSolverCache ??= await rootBundle.loadString(captchaSolverAsset);
 
   /// 拼出实际注入 WebView 的脚本：桥接 shim + 用 IIFE 包裹的上游脚本。
   ///
