@@ -121,6 +121,133 @@ void main() {
     expect(loaded.semesterStartDate, '2026-08-31');
   });
 
+  testWidgets('同一时段保留两门课时，两门课并排显示且位置不重叠', (tester) async {
+    final courses = [
+      Course(
+        name: '高等数学',
+        teacher: '张老师',
+        position: 'A101',
+        day: 1,
+        startSection: 1,
+        endSection: 2,
+        weeks: [9, 10, 11],
+      ),
+      Course(
+        name: '大学物理',
+        teacher: '李老师',
+        position: 'B202',
+        day: 1,
+        startSection: 1,
+        endSection: 2,
+        weeks: [9, 10, 11],
+      ),
+    ];
+
+    await tester.pumpWidget(_wrap(
+      ScheduleGrid(
+        courses: courses,
+        week: 9,
+        totalWeeks: 18,
+        timeSlots: _slots(),
+        semesterStartDate: '2026-08-31',
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // 两门课都要渲染出来
+    expect(find.text('高等数学'), findsOneWidget);
+    expect(find.text('大学物理'), findsOneWidget);
+
+    // 且水平位置错开（并排），不能叠在同一处互相遮挡
+    final rectA = tester.getRect(find.text('高等数学'));
+    final rectB = tester.getRect(find.text('大学物理'));
+    expect(rectA.left, isNot(closeTo(rectB.left, 1.0)));
+  });
+
+  testWidgets('起止节次不同但区间重叠时，两门课也并排显示', (tester) async {
+    final courses = [
+      Course(
+        name: '高等数学',
+        teacher: '张老师',
+        position: 'A101',
+        day: 1,
+        startSection: 1,
+        endSection: 2,
+        weeks: [9, 10, 11],
+      ),
+      Course(
+        name: '大学物理',
+        teacher: '李老师',
+        position: 'B202',
+        day: 1,
+        startSection: 2,
+        endSection: 3,
+        weeks: [9, 10, 11],
+      ),
+    ];
+
+    await tester.pumpWidget(_wrap(
+      ScheduleGrid(
+        courses: courses,
+        week: 9,
+        totalWeeks: 18,
+        timeSlots: _slots(),
+        semesterStartDate: '2026-08-31',
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('高等数学'), findsOneWidget);
+    expect(find.text('大学物理'), findsOneWidget);
+
+    // 部分重叠（共享第 2 节）也应分道并排，而不是叠在一起
+    final rectA = tester.getRect(find.text('高等数学'));
+    final rectB = tester.getRect(find.text('大学物理'));
+    expect(rectA.left, isNot(closeTo(rectB.left, 1.0)));
+  });
+
+  testWidgets('节次相邻但不重叠时，两门课共享同一列（都应全宽）', (tester) async {
+    final courses = [
+      Course(
+        name: '高等数学',
+        teacher: '张老师',
+        position: 'A101',
+        day: 1,
+        startSection: 1,
+        endSection: 2,
+        weeks: [9, 10, 11],
+      ),
+      Course(
+        name: '大学物理',
+        teacher: '李老师',
+        position: 'B202',
+        day: 1,
+        startSection: 3,
+        endSection: 4,
+        weeks: [9, 10, 11],
+      ),
+    ];
+
+    await tester.pumpWidget(_wrap(
+      ScheduleGrid(
+        courses: courses,
+        week: 9,
+        totalWeeks: 18,
+        timeSlots: _slots(),
+        semesterStartDate: '2026-08-31',
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('高等数学'), findsOneWidget);
+    expect(find.text('大学物理'), findsOneWidget);
+
+    // 不重叠的两门课不需要分道，左边界应一致（各自占满整列）
+    final rectA = tester.getRect(find.text('高等数学'));
+    final rectB = tester.getRect(find.text('大学物理'));
+    expect(rectA.left, closeTo(rectB.left, 1.0));
+  });
+
   testWidgets('隐藏周末时周六课程不渲染，显示周末时渲染', (tester) async {
     final courses = [
       Course(
