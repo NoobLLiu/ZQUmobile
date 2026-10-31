@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'pages/home_page.dart';
 import 'pages/jwgl_login_page.dart';
 import 'pages/mine_page.dart';
+import 'pages/notice_rewrite_page.dart';
 import 'pages/timetable_page.dart';
 import 'pages/utility_page.dart';
 import 'services/profile_repository.dart';
@@ -34,6 +35,7 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
         '/timetable': (ctx) => const TimetablePage(),
         '/jwgl': (ctx) => const JwglLoginPage(),
         '/utility': (ctx) => const UtilityPage(),
+        '/notice': (ctx) => const NoticeRewritePage(),
       },
     );
   }

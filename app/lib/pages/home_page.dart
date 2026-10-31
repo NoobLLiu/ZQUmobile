@@ -72,6 +72,12 @@ class HomePageState extends State<HomePage> {
         route: '/jwgl',
       ),
       const HomeFeature(
+        title: '通知转写',
+        subtitle: '班委群通知一键改写成班级群版本，AI 代笔',
+        icon: Icons.edit_note_outlined,
+        route: '/notice',
+      ),
+      const HomeFeature(
         title: '水电费查询',
         subtitle: '宿舍水电余额一键查看，本地缓存秒开',
         icon: Icons.water_drop_outlined,

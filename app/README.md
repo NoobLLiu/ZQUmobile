@@ -1,6 +1,6 @@
 # 掌上砚园
 
-肇庆学院校园助手（Android / Flutter）。提供教务系统登录与课表导入查看功能。
+肇庆学院校园助手（Android / Flutter）。提供教务系统登录、课表导入查看、AI 通知转写等功能。
 
 ## 功能
 
@@ -9,6 +9,7 @@
 | 首页 | 功能入口宫格，可进入课表、教务系统登录等模块 |
 | 课表 | 拾光课表风格的周视图网格，支持周次切换、课程详情、冲突并排展示；可从这里重新同步课表 |
 | 教务系统 | 内嵌 WebView **自动登录**肇庆学院教务系统（校内直连 / WebVPN） |
+| 通知转写 | 粘贴班委群通知，AI 按班级群口吻改写（DeepSeek），可复制直接发班群 |
 | 我的 | 个人信息、课表数据管理、**验证码训练**、清空缓存、开源许可 |
 
 ### 导航结构
@@ -74,6 +75,55 @@
 
 样本只存本机 `shared_preferences`（`zsy_captcha_templates`），不上传。
 
+## 通知转写（AI 改写）
+
+班委的日常痛点：老师/辅导员发的通知是写给「各位带班」的，要转发到班级群得自己改称谓、
+删掉「请帮忙转发」、补问候语、还要保留原文的排版格式。这个页面把这件事交给 AI。
+
+做法是把「班委通知转写」skill 的规则整段写进系统提示词
+（`lib/services/notice_rewrite_prompt.dart`，与 skill 规则一字不差），
+页面上只让用户选有限几项，其余交给规则：
+
+> **使用示例**：第一次进页面会自动弹一次（前后对照图 + 三步说明），
+> 之后点标题栏的 `?` 随时再看；弹窗里的「填入示例」可以把示例原文和选项一键填好，
+> 不想自己编内容时直接点「开始转写」就能看到效果。
+> 示例图由 `tool/example_figure.html` 经 Edge 无头模式截图生成
+> （`assets/images/notice_example.png`），改文案后重截即可。
+
+| 选项 | 作用 |
+|---|---|
+| 消息来源 | 决定标题行：【转发（辅导员）关于xx的通知】/【转发关于xx的通知】/【关于xx的通知】 |
+| 问好时间 | 早上好[太阳] / 中午好[太阳] / 下午好[太阳] / 傍晚好🌇 / 晚上好🌙，或按当前时间自动取 |
+| 问好对象 | 法学5班的同学们 / 同学们 / 各位同学，与问候语拼成整句 |
+| 截止时间 | 保持原样，或统一替换为新时间（「原时间→新时间」只改一处） |
+| 补充通知 | 0~N 条，每条可选「融入原通知」或「接在正文下面」 |
+
+硬规则（提示词里写死的）：只改外壳，时间/地点/邮箱/链接/命名规则逐字保留；
+正文与结尾不得再出现「转发」；问候段、正文各段、结尾段行首恰好两个半角空格；
+①②③/⭕/⚠️ 条目行与括号说明行顶格。
+
+### 关于 API Key
+
+> **作品提交阶段，为了方便演示，这里直接使用了参赛组自己的 API Key，
+> 正常情况下会让用户填自己的 API Key。**
+
+这个功能最初是微信小程序（`notice-rewrite-mp`），当时靠 WorkBuddy 云服务的
+免密钥大模型通道跑；那条通道只在小程序运行时内可用（服务端按来源精确校验），
+且原环境已失效，搬到原生 App 里复用它不成立，所以改为直连 DeepSeek 官方接口。
+
+Key 不写明文：`lib/core/ai_credentials.dart` 里按掩码异或成字节表，运行时还原，
+界面上任何地方都不展示、也不提供查看入口。要换成用户自填只需改这一个文件 +
+页脚的说明文案。
+
+联调脚本（会真实调用接口、消耗额度）：
+
+```bash
+cd app && dart run tool/smoke_notice.dart
+```
+
+它会把拼好的用户消息、模型输出、以及「标题行是否顶格 / 缩进是否合规 / 是否残留转发字样」
+的检查结果一并打出来，改提示词后跑一次就知道有没有改坏。
+
 ## 开发
 
 ```bash
@@ -85,7 +135,6 @@ flutter pub get
 flutter analyze
 flutter test
 ```
-
 > Windows 上若设置了 `http_proxy` / `https_proxy`，跑 `flutter test` 需额外设置
 > `NO_PROXY=localhost,127.0.0.1`，否则 `flutter_tester` 的本地 WebSocket 握手会被代理拦截。
 
@@ -126,19 +175,25 @@ app/
 ├── lib/
 │   ├── main.dart                 # App 根 + 底部导航外壳
 │   ├── core/grid_style.dart      # 网格样式常量与拾光配色板
+│   ├── core/ai_credentials.dart  # 内置 DeepSeek 凭据（掩码存储，界面不展示）
 │   ├── models/timetable.dart     # 课程 / 节次 / 课表模型
 │   ├── services/
 │   │   ├── jwgl_service.dart     # 桥接通道消息解析（进度 / 课程 / 配置 / 作息 / 完成）
+│   │   ├── notice_rewrite_prompt.dart # 通知转写的系统提示词与选项定义
+│   │   ├── deepseek_client.dart  # DeepSeek 流式对话（SSE，可中断）
 │   │   └── timetable_repository.dart  # 本地缓存（SharedPreferences）
 │   ├── pages/
 │   │   ├── home_page.dart        # 首页功能宫格
 │   │   ├── mine_page.dart        # 我的
+│   │   ├── notice_rewrite_page.dart # 通知转写
 │   │   ├── timetable_page.dart   # 课表页
 │   │   └── jwgl_login_page.dart  # 教务系统 WebView 登录与导入
 │   └── widgets/schedule_grid.dart # 拾光风格课表网格
-├── assets/js/
-│   ├── zqu_upstream.js           # shiguang_warehouse 上游 ZQU 适配脚本（原文）
-│   └── shiguang_bridge_shim.js   # 把官方 bridge 调用映射到 Flutter 的适配层
+├── assets/
+│   ├── images/notice_example.png  # 通知转写前后对照示例图
+│   └── js/
+│       ├── zqu_upstream.js         # shiguang_warehouse 上游 ZQU 适配脚本（原文）
+│       └── shiguang_bridge_shim.js # 把官方 bridge 调用映射到 Flutter 的适配层
 └── test/                         # 解析逻辑与界面冒烟测试
 ```
 
@@ -153,5 +208,8 @@ app/
   其中 `resources/ZQU/zqu_01.js` 为本项目教务对接逻辑的直接来源（Apache-2.0）。
 - Flutter 生态依赖：[flutter](https://flutter.dev)、[webview_flutter](https://pub.dev/packages/webview_flutter)、
   [shared_preferences](https://pub.dev/packages/shared_preferences)。
+- [DeepSeek](https://www.deepseek.com/) —— 通知转写功能的模型服务（`deepseek-flash` / `deepseek-v4-pro`）。
+- 「班委通知转写」skill —— 通知转写的规则与提示词来源，本项目的 `notice_rewrite_prompt.dart`
+  即由它的规则整理而来。
 
 > 感谢以上项目的作者与贡献者。本仓库仅在自己代码中引用与致谢，不会打扰上游。
