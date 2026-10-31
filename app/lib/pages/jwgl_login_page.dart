@@ -300,6 +300,16 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       }
       _status = message;
     });
+
+    // 非导入模式没有底部状态栏，用 SnackBar 让自动求解结果可见
+    if (!widget.allowImport && (state == 'solved' || state == 'failed')) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(message),
+        ));
+    }
   }
 
   // ---------------------------------------------------- 滑块验证码回传结束
