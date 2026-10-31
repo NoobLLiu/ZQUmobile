@@ -178,6 +178,22 @@
       var msg = String(res.message || res.error || '');
       if (res.error === 'TOO_MANY_ATTEMPTS') msg = '尝试次数过多，请稍后再试';
       if (res.error === 'INVALID_ACCOUNT') msg = '账号或密码不正确';
+      // 「请拖动滑块验证」不是登录失败：滑块求解器会自动拖完再重新点登录，
+      // 这里只报告进度，绝不能 stopped=true（否则整条链路就断了）。
+      if (/滑块|拖动|验证/.test(msg)) {
+        post('slider', '需要滑块验证，正在自动完成 ...');
+        return;
+      }
+      // 「需要确认登录」是重复登录确认弹窗：点掉它，页面会继续跳转
+      if (/确认/.test(msg)) {
+        var btn = document.querySelector('.layui-layer-btn0') ||
+          document.querySelector('.layui-layer .layui-layer-btn a');
+        if (btn) {
+          btn.click();
+          post('progress', '已确认登录，正在进入 ...');
+          return;
+        }
+      }
       post('failed', 'WebVPN 登录失败：' + (msg || '未知原因'));
       stopped = true;
       return;

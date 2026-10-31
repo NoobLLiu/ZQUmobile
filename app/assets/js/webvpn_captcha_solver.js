@@ -1,35 +1,24 @@
-// WebVPN 滑块验证码自动求解器（页面内 fetch 模式）。
-//
-// 网瑞达（VRD/Wengine）WebVPN 登录失败后会弹出拖动滑块验证码
-// （#drag-captcha-layer）。本脚本在登录页上下文里自动完成验证：
-//   1. fetch GET /login/image 拉取验证码 {p: 背景, s: 碎片, h: y坐标}；
-//   2. canvas 解码后用 Sobel 梯度幅值 + 归一化互相关（NCC）定位缺口：
-//      缺口是照片上叠加的半透明色罩，色偏属低频，梯度域匹配对色罩
-//      不敏感（对真实验证码实测零误差）；
-//   3. fetch POST /login/verify 提交 w（与页面 drag.js 同构的参数）；
-//   4. 成功后重新点击登录按钮走正常登录；失败则换一张图重试
-//      （每张图仅可验证一次），最多 MAX_RETRY 次，超过后交还用户手动拖动。
-//
-// 为什么不走 DOM 合成拖动：页面的 drag.js 每次 mousedown 都会在
-// document 上注册新的 mousemove/mouseup 监听器且从不清除，多次拖动
-// 时旧监听器互相污染拖动状态。fetch 模式与 drag.js 的提交行为完全
-// 同构（同源、同 cookie、同参数格式），但不依赖其 DOM 状态。
-//
-// 坐标标定（真实页面反复验证）：verify 的 w = 碎片渲染原点x - 10，
-// 即 w = 缺口bbox左缘 - 碎片bbox左缘x0 - 10；碎片渲染 y = h。
-//
-// 全程通过 zsyBridge 以 {type:'captcha', state, message} 回传进度。
+/**
+ * WebVPN 滑块验证码自动求解。
+ *
+ * 算法参考 D:\AICode\ZQU\GetTimeTable\zqu-timetable-scraper（已验证可用）：
+ *   1. 背景图里的缺口是**蓝色拼图块**（HSV H≈150-210°），用颜色分割定位；
+ *   2. 位移公式：w = cx * scale - 30 + 10（cx=缺口中心，scale=背景CSS宽/280，
+ *      30=初始left(10)+半宽(20)，+10=实测服务端偏左需右移）；
+ *   3. verify 提交：t=0（与页面 drag.js 一致——startTime/endTime 从未赋值），
+ *      locations 用 clientX 轨迹；
+ *   4. verify 成功后：layer.close + 点 #login（等价于 drag.js 的 verifySuccess）。
+ */
 (function () {
   'use strict';
 
-  if (window.__zsyCaptchaWatcher) return; // 幂等：页面跳转回来会重复注入
+  if (window.__zsyCaptchaWatcher) return;
   window.__zsyCaptchaWatcher = true;
 
-  var MAX_RETRY = 4; // 少量重试即止：连续高频请求会触发服务端 IP 风控
-  var busy = false;
-  var solved = false;
-  var failed = false; // 本轮会话已放弃自动（交还用户），弹窗关闭才复位
+  var MAX_RETRY = 6;
   var retries = 0;
+  var busy = false;
+  var failed = false;
 
   function post(state, message) {
     var text = JSON.stringify({ type: 'captcha', state: state, message: message || '' });
@@ -38,11 +27,11 @@
         window.zsyBridge.postMessage(text);
         return;
       }
-    } catch (e) { /* 桥不可用时落到控制台 */ }
+    } catch (e) {}
     console.log('[zsy-captcha] ' + text);
   }
 
-  // ------------------------------------------------------------ 像素与检测
+  // ------------------------------------------------------------ 图像
 
   function loadPixels(src) {
     return new Promise(function (resolve, reject) {
@@ -51,107 +40,57 @@
         var cv = document.createElement('canvas');
         cv.width = img.naturalWidth;
         cv.height = img.naturalHeight;
-        var ctx = cv.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        resolve(ctx.getImageData(0, 0, cv.width, cv.height));
+        cv.getContext('2d').drawImage(img, 0, 0);
+        resolve(cv.getContext('2d').getImageData(0, 0, cv.width, cv.height));
       };
       img.onerror = function () { reject(new Error('image load failed')); };
       img.src = src;
     });
   }
 
-  function toGray(px) {
-    var n = px.width * px.height;
-    var g = new Float32Array(n);
-    for (var i = 0; i < n; i++) {
-      g[i] = 0.299 * px.data[i * 4] + 0.587 * px.data[i * 4 + 1] + 0.114 * px.data[i * 4 + 2];
+  function rgbToHsv(r, g, b) {
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    var v = mx;
+    var s = mx === 0 ? 0 : (mx - mn) / mx * 255;
+    var h = 0;
+    if (mx !== mn) {
+      var d = mx - mn;
+      if (mx === r) h = (g - b) / d + (g < b ? 6 : 0);
+      else if (mx === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
     }
-    return g;
-  }
-
-  function sobelMag(g, w, h) {
-    var out = new Float32Array(w * h);
-    for (var y = 1; y < h - 1; y++) {
-      for (var x = 1; x < w - 1; x++) {
-        var i = y * w + x;
-        var gx = -g[i - w - 1] + g[i - w + 1] - 2 * g[i - 1] + 2 * g[i + 1] - g[i + w - 1] + g[i + w + 1];
-        var gy = -g[i - w - 1] - 2 * g[i - w] - g[i - w + 1] + g[i + w - 1] + 2 * g[i + w] + g[i + w + 1];
-        out[i] = Math.sqrt(gx * gx + gy * gy);
-      }
-    }
-    return out;
-  }
-
-  /** 在背景梯度图上滑窗匹配模板梯度（ZNCC），y 限制在 [yMin, yMax]。 */
-  function nccMatch(bgMag, bgW, tplMag, tw, th, yMin, yMax) {
-    var n = tw * th;
-    var tSum = 0, tSq = 0;
-    for (var i = 0; i < n; i++) { tSum += tplMag[i]; tSq += tplMag[i] * tplMag[i]; }
-    var tVar = tSq - tSum * tSum / n;
-    if (tVar <= 0) return { x: 0, y: yMin, score: 0 };
-
-    var best = -2, bx = 0, by = yMin;
-    for (var y = yMin; y <= yMax; y++) {
-      for (var x = 0; x <= bgW - tw; x++) {
-        var s = 0, sq = 0, dot = 0, k = 0;
-        for (var ty = 0; ty < th; ty++) {
-          var row = (y + ty) * bgW + x;
-          for (var tx = 0; tx < tw; tx++) {
-            var v = bgMag[row + tx];
-            s += v; sq += v * v; dot += v * tplMag[k++];
-          }
-        }
-        var wVar = sq - s * s / n;
-        if (wVar <= 0) continue;
-        var score = (dot - s * tSum / n) / Math.sqrt(wVar * tVar);
-        if (score > best) { best = score; bx = x; by = y; }
-      }
-    }
-    return { x: bx, y: by, score: best };
+    return [h, s, v];
   }
 
   /**
-   * 对一对验证码图检测缺口，返回可直接提交的 w。
-   * piecePx: 40x40 碎片 RGBA；bgPx: 280x200 背景；h: 碎片渲染 y。
+   * 在背景图里找蓝色缺口色块，返回 {cx, cy, w, h} 或 null。
+   * 蓝色范围（HSV）：H=150-210°（青到蓝），S>50，V>100。
+   * 实测 webvpn.zqu.edu.cn 的缺口 H≈171-186°，S≈62-86，V≈135-178。
    */
-  function solveWidth(bgPx, piecePx, h) {
-    // 碎片：alpha>=128 的 bbox（本系统固定 38x37、起点 (2,1)，此处动态求）
-    var pw = piecePx.width, ph = piecePx.height;
-    var x0 = pw, y0 = ph, x1 = -1, y1 = -1;
-    for (var yy = 0; yy < ph; yy++) {
-      for (var xx = 0; xx < pw; xx++) {
-        if (piecePx.data[(yy * pw + xx) * 4 + 3] >= 128) {
-          if (xx < x0) x0 = xx;
-          if (xx > x1) x1 = xx;
-          if (yy < y0) y0 = yy;
-          if (yy > y1) y1 = yy;
+  function findGap(bgPx) {
+    var w = bgPx.width, h = bgPx.height;
+    var minX = w, maxX = -1, minY = h, maxY = -1, cnt = 0;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var si = (y * w + x) * 4;
+        var hsv = rgbToHsv(bgPx.data[si], bgPx.data[si + 1], bgPx.data[si + 2]);
+        if (hsv[0] >= 150 && hsv[0] <= 210 && hsv[1] > 50 && hsv[2] > 100) {
+          cnt++;
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
         }
       }
     }
-    var tw = x1 - x0 + 1, th = y1 - y0 + 1;
-    if (tw <= 0 || th <= 0) throw new Error('piece alpha empty');
-
-    var tplG = new Float32Array(tw * th);
-    for (var ty = 0; ty < th; ty++) {
-      for (var tx = 0; tx < tw; tx++) {
-        var si = ((ty + y0) * pw + (tx + x0)) * 4;
-        tplG[ty * tw + tx] =
-          0.299 * piecePx.data[si] + 0.587 * piecePx.data[si + 1] + 0.114 * piecePx.data[si + 2];
-      }
-    }
-    var tplMag = sobelMag(tplG, tw, th);
-    var bgMag = sobelMag(toGray(bgPx), bgPx.width, bgPx.height);
-
-    // 碎片渲染 top = h，缺口 bbox 顶部 = h + y0，搜索窗口 ±6px
-    var yMin = Math.max(0, h + y0 - 6);
-    var yMax = Math.min(bgPx.height - th, h + y0 + 6);
-    var m = nccMatch(bgMag, bgPx.width, tplMag, tw, th, yMin, yMax);
-
-    if (m.score < 0.25) return { w: -1, score: m.score };
-    // w = 碎片渲染原点x - 10；匹配点 x 是模板左上角 → 原点 = m.x - x0
-    var w = m.x - x0 - 10;
-    if (w < 5 || w > bgPx.width - tw) return { w: -1, score: m.score };
-    return { w: w, score: m.score };
+    if (cnt < 50) return null;
+    var gw = maxX - minX + 1, gh = maxY - minY + 1;
+    // 缺口尺寸应接近碎片（25~55px），太小是噪点
+    if (gw < 25 || gw > 55 || gh < 25 || gh > 55) return null;
+    return {
+      cx: Math.round(minX + gw / 2),
+      cy: Math.round(minY + gh / 2),
+      w: gw, h: gh, count: cnt
+    };
   }
 
   // ------------------------------------------------------------ 协议交互
@@ -163,14 +102,40 @@
     }).then(function (r) { return r.json(); });
   }
 
-  /** 提交 verify。ox/oy 为滑块手柄中心的页面坐标（模拟 drag.js 的轨迹点）。 */
+  function getMetrics() {
+    var footer = document.querySelector('.drag-captcha-footer');
+    var btnEl = document.getElementById('drap-captcha-slidetrigger');
+    var bgEl = document.querySelector('.drag-captcha-bg img');
+    if (!footer || !btnEl || !bgEl) return null;
+    var fb = footer.getBoundingClientRect();
+    var bb = btnEl.getBoundingClientRect();
+    var bgb = bgEl.getBoundingClientRect();
+    return {
+      trackW: fb.width,
+      btnW: bb.width,
+      btnX: bb.x + bb.width / 2,
+      btnY: bb.y + bb.height / 2,
+      bgScale: bgb.width / 280
+    };
+  }
+
+  /** 提交 verify（t=0 与页面 drag.js 一致）。 */
   function verify(w, ox, oy) {
-    var body = 'w=' + encodeURIComponent(w) +
-      '&t=0' +
-      '&locations%5B0%5D%5Bx%5D=' + ox +
-      '&locations%5B0%5D%5By%5D=' + oy +
-      '&locations%5B1%5D%5Bx%5D=' + (ox + w) +
-      '&locations%5B1%5D%5By%5D=' + oy;
+    var pts = [];
+    var n = 5;
+    for (var i = 0; i <= n; i++) {
+      var f = i / n;
+      var eased = 1 - Math.pow(1 - f, 2);
+      pts.push({
+        x: Math.round(ox + w * eased),
+        y: Math.round(oy)
+      });
+    }
+    var body = 'w=' + encodeURIComponent(w) + '&t=0';
+    for (var k = 0; k < pts.length; k++) {
+      body += '&locations%5B' + k + '%5D%5Bx%5D=' + pts[k].x +
+        '&locations%5B' + k + '%5D%5By%5D=' + pts[k].y;
+    }
     return fetch('/login/verify', {
       method: 'POST',
       credentials: 'same-origin',
@@ -182,24 +147,13 @@
     }).then(function (r) { return r.json(); });
   }
 
-  /** 滑块手柄中心的页面坐标（drag.js 记录的就是 pageX/pageY）。 */
-  function sliderOrigin() {
-    var btn = document.getElementById('drap-captcha-slidetrigger');
-    if (!btn) return { x: 604, y: 410 };
-    var r = btn.getBoundingClientRect();
-    var sx = r.left + r.width / 2 + (window.scrollX || 0);
-    var sy = r.top + r.height / 2 + (window.scrollY || 0);
-    return { x: Math.round(sx), y: Math.round(sy) };
-  }
-
-  /** verify 成功后重新触发登录（表单值仍在，页面自己会再次校验滑块状态）。 */
-  function resubmitLogin() {
-    var btns = document.querySelectorAll('button, input[type="submit"], .login-btn, a');
-    for (var i = 0; i < btns.length; i++) {
-      var t = btns[i].textContent || btns[i].value || '';
-      if (/^\s*登\s*录\s*$/.test(t)) { btns[i].click(); return true; }
-    }
-    return false;
+  /** verify 成功后：关滑块层 + 点登录（等价于 drag.js 的 verifySuccess）。 */
+  function afterVerifySuccess() {
+    try { if (typeof layer !== 'undefined') layer.close(layer.index); } catch (e) {}
+    setTimeout(function () {
+      var btn = document.getElementById('login');
+      if (btn) btn.click();
+    }, 500);
   }
 
   // ------------------------------------------------------------ 主流程
@@ -207,20 +161,29 @@
   function attempt() {
     return fetchCaptcha()
       .then(function (d) {
-        return Promise.all([
-          loadPixels(d.p), loadPixels(d.s)
-        ]).then(function (px) {
-          var r = solveWidth(px[0], px[1], d.h || 0);
-          if (r.w < 0) {
-            post('progress', '识别置信度不足(' + r.score.toFixed(3) + ')，自动换一张');
+        return loadPixels(d.p).then(function (bgPx) {
+          var gap = findGap(bgPx);
+          if (!gap) {
+            post('progress', '未找到蓝色缺口，自动换一张');
             return false;
           }
-          post('progress', '识别到滑块缺口(得分' + r.score.toFixed(3) + ')，正在验证 ...');
-          var o = sliderOrigin();
-          return verify(r.w, o.x, o.y).then(function (res) {
+          var m = getMetrics();
+          if (!m) {
+            post('progress', '滑块几何信息不可用，自动换一张');
+            return false;
+          }
+          var scale = m.bgScale || 1.0;
+          // 参考公式：位移 = 缺口中心 * 缩放 - 30 + 10(实测微调)
+          var dx = Math.round(gap.cx * scale - 30 + 10);
+          if (dx < 5 || dx > m.trackW - m.btnW) {
+            post('progress', '位移越界(dx=' + dx + ')，自动换一张');
+            return false;
+          }
+          post('progress', '识别到缺口(cx=' + gap.cx + ',dx=' + dx + ')，正在验证 ...');
+          return verify(dx, m.btnX, m.btnY).then(function (res) {
             if (res && res.success === true) {
               post('solved', '滑块验证已自动完成');
-              resubmitLogin();
+              afterVerifySuccess();
               return true;
             }
             post('progress', '第' + (retries + 1) + '次验证未通过，自动换一张重试');
@@ -239,36 +202,31 @@
           return;
         }
         retries++;
-        // 放缓节奏：连续快速取图会触发服务端频率限制（/login/image 403）
         setTimeout(loop, 1500 + Math.floor(Math.random() * 800));
       })
-      .catch(function () {
-        if (retries >= MAX_RETRY - 1) {
+      .catch(function (e) {
+        post('progress', '求解异常(' + String(e).slice(0, 80) + ')，重试 ...');
+        if (retries < MAX_RETRY - 1) {
+          retries++;
+          setTimeout(loop, 1500);
+        } else {
           failed = true;
-          post('failed', '自动验证出错，请手动拖动滑块');
+          post('failed', '自动验证异常，请手动拖动滑块');
           busy = false;
-          return;
         }
-        retries++;
-        setTimeout(loop, 1500 + Math.floor(Math.random() * 800));
       });
   }
 
-  // 轮询：滑块弹窗出现即触发。弹窗关闭后重置会话，下次登录可再次自动求解。
-  function layerVisible() {
-    var layer = document.getElementById('drag-captcha-layer');
-    if (!layer) return false;
-    var st = getComputedStyle(layer);
-    return st.display !== 'none' && st.visibility !== 'hidden';
-  }
-
+  // 轮询：滑块层出现就开始求解
   setInterval(function () {
-    if (!layerVisible()) {
-      if (!busy) { solved = false; failed = false; retries = 0; }
-      return;
-    }
-    if (busy || solved || failed) return;
+    if (busy || failed) return;
+    var layer = document.getElementById('drag-captcha-layer');
+    if (!layer) return;
+    var st = window.getComputedStyle(layer);
+    if (st.display === 'none' || layer.getBoundingClientRect().width === 0) return;
+    // 滑块可见 → 开始
     busy = true;
+    retries = 0;
     post('progress', '检测到滑块验证，正在自动识别 ...');
     loop();
   }, 800);

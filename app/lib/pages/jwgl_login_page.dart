@@ -69,7 +69,11 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   static const String campusUrl = 'https://jwgl.zqu.edu.cn/';
 
   /// 未购校园网：先经 WebVPN 进入，再从功能页进教务系统。
-  static const String webvpnUrl = 'https://webvpn-free.zqu.edu.cn/';
+  ///
+  /// 用 `webvpn.zqu.edu.cn`（不是 `webvpn-free`）：缺口是蓝色拼图块，
+  /// 可用 HSV 颜色分割精确定位；`webvpn-free` 的缺口颜色随背景变化不可靠。
+  /// 且 `jwgl.zqu.edu.cn` 的 302 也跳到这里。
+  static const String webvpnUrl = 'https://webvpn.zqu.edu.cn/';
 
   double _progress = 0;
   bool _loadingPage = true;
