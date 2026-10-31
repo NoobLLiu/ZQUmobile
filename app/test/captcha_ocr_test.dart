@@ -119,6 +119,16 @@ void main() {
       expect(correct, 18);
     });
 
+    test('每类样本数有上限，防止本地存储无限增长', () {
+      final g = CaptchaOcr.segment(fixture('c_048.jpg'))!.glyphs.first;
+      final t = CaptchaTemplates();
+      for (var i = 0; i < CaptchaTemplates.maxPerClass + 8; i++) {
+        t.add('A', g.pixels);
+      }
+      expect(t.counts['A'], CaptchaTemplates.maxPerClass);
+      expect(t.sampleCount, CaptchaTemplates.maxPerClass);
+    });
+
     test('像素与 JSON 往返不丢样本', () {
       final glyphs = CaptchaOcr.segment(fixture('c_048.jpg'))!.glyphs;
       final t = CaptchaTemplates();

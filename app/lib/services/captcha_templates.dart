@@ -24,6 +24,12 @@ class _ClassSamples {
 class CaptchaTemplates {
   CaptchaTemplates();
 
+  /// 每个字符最多保留多少张样本。
+  ///
+  /// 质心取平均，12 张已经远超收益；不设上限会让本地存储无限增长
+  /// （单样本 base64 后约 0.8KB，36 类 × 无限张很快就到几百 KB）。
+  static const int maxPerClass = 12;
+
   final Map<String, _ClassSamples> _classes = {};
 
   /// 样本总数。
@@ -43,6 +49,7 @@ class CaptchaTemplates {
   void add(String ch, Float32List pixels) {
     final c = _classes.putIfAbsent(ch, _ClassSamples.new);
     c.pixels.add(pixels);
+    if (c.pixels.length > maxPerClass) c.pixels.removeAt(0);
     c.invalidate();
   }
 
