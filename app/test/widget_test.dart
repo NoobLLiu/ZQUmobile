@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zhangshang_yanyuan/main.dart';
+import 'package:zhangshang_yanyuan/pages/notice_rewrite_page.dart';
 
 /// 一份完整的个人信息，避免首屏引导弹窗挡住界面。
 final String _completeProfile = jsonEncode({
@@ -67,6 +68,53 @@ void main() {
     expect(entry, findsOneWidget);
     // 还没训练过：副标题应说明需要手动输入
     expect(find.textContaining('未训练'), findsOneWidget);
+  });
+
+  testWidgets('首页可以进入通知转写', (WidgetTester tester) async {
+    await tester.pumpWidget(const ZhangShangZhaoYuanApp());
+
+    // 宫格第二行默认在首屏之外，先滚一点
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -260));
+    await tester.pumpAndSettle();
+
+    final entry = find.text('通知转写');
+    expect(entry, findsOneWidget);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    expect(find.text('通知转写助手'), findsOneWidget);
+  });
+
+  testWidgets('通知转写未粘贴原文时不发起请求', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
+
+    final button = find.text('开始转写');
+    await tester.dragUntilVisible(
+      button,
+      find.byType(ListView),
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    // 前端先拦下来，不白花一次额度
+    expect(find.text('请先粘贴原通知'), findsOneWidget);
+  });
+
+  testWidgets('通知转写给出演示期用 Key 的说明', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
+
+    final notice = find.textContaining('作品提交阶段');
+    await tester.dragUntilVisible(
+      notice,
+      find.byType(ListView),
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+
+    expect(notice, findsOneWidget);
   });
 
   testWidgets('个人信息不完整时会弹出填写引导', (WidgetTester tester) async {
