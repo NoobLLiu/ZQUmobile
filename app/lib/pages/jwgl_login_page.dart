@@ -1,7 +1,7 @@
 /// 教务系统登录页（内嵌 WebView）。
 ///
 /// 页面结构参照拾光课表的 WebViewScreen（Apache-2.0）：
-/// - 顶部只有标题 + 更多菜单（刷新 / 输入网址），不放常驻按钮遮挡网页；
+/// - 顶部只有标题 + 更多菜单（自动登录 / 刷新 / 输入网址），不放常驻按钮遮挡网页；
 /// - 底部一条操作栏：左侧引导文字，右侧「执行导入」按钮；
 /// - 加载进度以细进度条浮在 WebView 顶部。
 ///
@@ -91,6 +91,13 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   // ---- 自动登录状态 ----
   /// 「自动登录中」弹窗是否显示。
   bool _autoVisible = true;
+
+  /// 菜单里手动指定的自动登录目标（`'webvpn'` 或 `null`）。
+  ///
+  /// 只有选「WebVPN」时才强制为 `'webvpn'`；选「教务系统」保持 `null`，
+  /// 让脚本按「是否已购校园网」自行决定——校外直接开 jwgl 会被 302 到
+  /// WebVPN，此时强填 `'jwgl'` 会在门户页被误判成"已进入教务"而提前结束。
+  String? _autoTarget;
 
   /// 弹窗是否挡住网页（true 时盖一层深色蒙层；false 时只浮一个卡片）。
   bool _autoBlocking = true;
@@ -659,9 +666,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     _ocrRefreshes = 0;
 
     final profile = _profile;
-    final expect = (profile.hasCampusNetwork || _submittedJwgl)
-        ? 'jwgl'
-        : 'webvpn';
+    // 菜单里手动选了「WebVPN」就强制走 WebVPN；否则按校园网状态自动决定
+    final expect = _autoTarget ??
+        ((profile.hasCampusNetwork || _submittedJwgl) ? 'jwgl' : 'webvpn');
     final cfg = jsonEncode({
       'sid': profile.studentId.trim(),
       'jwglPwd': profile.jwglPassword,
@@ -880,6 +887,100 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   }
 
   Future<void> _reload() => _controller?.reload() ?? Future.value();
+
+  /// 菜单里的「自动登录」：让用户选目标系统，再从头跑一遍自动登录。
+  ///
+  ///   - 教务系统：打开 jwgl 入口（校外会自动 302 到 WebVPN，脚本按状态处理）；
+  ///   - WebVPN：打开 WebVPN 入口，并强制走「先登录 WebVPN 再进教务」的链路。
+  Future<void> _pickAutoTarget() async {
+    if (_fetching) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('正在导入课表，请完成后再试自动登录')),
+      );
+      return;
+    }
+
+    final target = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('自动登录'),
+        contentPadding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.school),
+              title: const Text('教务系统'),
+              subtitle: const Text('jwgl.zqu.edu.cn'),
+              onTap: () => Navigator.of(ctx).pop('jwgl'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.vpn_lock),
+              title: const Text('WebVPN'),
+              subtitle: const Text('webvpn.zqu.edu.cn'),
+              onTap: () => Navigator.of(ctx).pop('webvpn'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+    if (target == null) return;
+    await _restartAutoLogin(target);
+  }
+
+  /// 按用户指定的目标重新触发自动登录：停旧流程 → 清状态 → 重新加载入口。
+  Future<void> _restartAutoLogin(String target) async {
+    final controller = _controller;
+    if (controller == null) return;
+
+    // 先停掉上一轮编排，避免两个循环互相打架
+    _autoSlowTimer?.cancel();
+    try {
+      await controller.runJavaScript(
+        'window.__zsyAutoLogin && window.__zsyAutoLogin.stop();',
+      );
+    } catch (_) {
+      /* 页面正在跳转时忽略 */
+    }
+
+    final isJwgl = target != 'webvpn';
+    _autoTarget = isJwgl ? null : 'webvpn';
+    _submittedJwgl = false;
+    _ocrAttempts = 0;
+    _ocrRefreshes = 0;
+    _pendingCaptchaBytes = null;
+    _pendingCaptchaText = '';
+    _captchaCtrl.clear();
+
+    final step = isJwgl ? '正在打开教务系统 ...' : '正在打开 WebVPN ...';
+    setState(() {
+      _error = null;
+      _autoVisible = true;
+      _autoBlocking = true;
+      _autoCaptcha = false;
+      _ocrHint = null;
+      _captchaBytes = null;
+      _autoStep = step;
+      _status = step;
+    });
+
+    // 和首次进入一致的 45 秒兜底
+    _autoSlowTimer = Timer(const Duration(seconds: 45), () {
+      if (!mounted || !_autoVisible) return;
+      setState(() {
+        _autoBlocking = false;
+        _autoStep = '自动登录耗时较长，可直接在页面上操作';
+      });
+    });
+
+    await controller.loadRequest(Uri.parse(isJwgl ? campusUrl : webvpnUrl));
+  }
 
   /// 菜单里的「输入网址」：用于在校内直连与 WebVPN 之间切换。
   ///
@@ -1119,10 +1220,19 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
         actions: [
           PopupMenuButton<String>(
             onSelected: (v) {
+              if (v == 'auto') _pickAutoTarget();
               if (v == 'reload') _reload();
               if (v == 'url') _editUrl();
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'auto',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.login),
+                  title: Text('自动登录'),
+                ),
+              ),
               PopupMenuItem(
                 value: 'reload',
                 child: ListTile(
