@@ -17,12 +17,6 @@ import '../services/profile_repository.dart';
 import '../services/utility_provider.dart';
 import '../widgets/profile_dialog.dart';
 
-/// 电费低余额阈值（度），参考完美校园轮询插件默认值。
-const double _kLowElectricity = 10.0;
-
-/// 水费低余额阈值（吨），参考完美校园轮询插件默认值。
-const double _kLowWater = 1.0;
-
 /// 电费主题色（琥珀色）。
 const Color _kElectricityColor = Color(0xFFE8930C);
 
@@ -274,6 +268,8 @@ class _UtilityPageState extends State<UtilityPage> {
             children: [
               for (final room in rooms) _RoomCard(room: room),
               const SizedBox(height: 8),
+              const _ReminderNote(),
+              const SizedBox(height: 8),
               Text(
                 '更新于 ${_formatTime(_fetchedAt)} · 数据来自完美校园',
                 textAlign: TextAlign.center,
@@ -332,9 +328,9 @@ class _RoomCard extends StatelessWidget {
 
   final UtilityRoom room;
 
-  bool get _elecLow => room.electricity <= _kLowElectricity;
+  bool get _elecLow => isElectricityLow(room.electricity);
 
-  bool get _waterLow => room.water <= _kLowWater;
+  bool get _waterLow => isWaterLow(room.water);
 
   @override
   Widget build(BuildContext context) {
@@ -522,4 +518,60 @@ class _BalanceTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 页面底部：低余额阈值与提醒功能的说明。
+class _ReminderNote extends StatelessWidget {
+  const _ReminderNote();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.notifications_active_outlined,
+                size: 15,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '余额不足提醒',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '· 余额低于阈值时，本页与看板上的数字会标红：'
+            '电 ≤ ${_trim(kLowElectricity)} 度、水 ≤ ${_trim(kLowWater)} 吨。\n'
+            '· 在「我的 → 水电余额提醒」开启后，每整点和半点自动查询一次，'
+            '余额从充足变为不足时发系统通知。\n'
+            '· 提醒依赖应用进程存活；若被系统清理后台将无法提醒，'
+            '建议在系统设置中允许本应用「自启动」并加入后台白名单。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _trim(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 }

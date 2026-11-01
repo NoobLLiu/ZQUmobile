@@ -1,7 +1,7 @@
 name: zhangshang_yanyuan
 description: 掌上砚园 —— 肇庆学院校园助手（课表 / 教务系统 / 通知转写 / 快递站状态）。
 publish_to: "none"
-version: 1.10.0+22
+version: 1.11.0+23
 
 environment:
   sdk: ^3.13.7
@@ -14,6 +14,7 @@ dependencies:
   shared_preferences: ^2.3.0
   image: ^4.3.0
   cupertino_icons: ^1.0.8
+  flutter_local_notifications: ^22.3.3
 
 dev_dependencies:
   flutter_test:

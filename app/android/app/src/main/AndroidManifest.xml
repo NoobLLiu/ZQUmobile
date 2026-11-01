@@ -2,6 +2,8 @@
     <!-- 教务系统与 WebVPN 访问需要网络 -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- 水电余额不足提醒（Android 13+ 需运行时申请） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="掌上砚园"

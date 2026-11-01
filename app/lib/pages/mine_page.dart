@@ -9,6 +9,7 @@ import '../models/timetable.dart';
 import '../services/captcha_templates.dart';
 import '../services/profile_repository.dart';
 import '../services/timetable_repository.dart';
+import '../services/utility_reminder.dart';
 import '../widgets/profile_dialog.dart';
 import 'captcha_training_page.dart';
 
@@ -30,6 +31,9 @@ class MinePageState extends State<MinePage> {
   /// 验证码识别训练样本。
   CaptchaTemplates _templates = CaptchaTemplates();
 
+  /// 水电余额提醒开关。
+  bool _reminderOn = false;
+
   @override
   void initState() {
     super.initState();
@@ -40,11 +44,13 @@ class MinePageState extends State<MinePage> {
     final tt = await TimetableRepository.load();
     final profile = await ProfileRepository.load();
     final templates = await CaptchaTemplateRepository.load();
+    final reminderOn = await UtilityReminder.isEnabled();
     if (!mounted) return;
     setState(() {
       _tt = tt;
       _profile = profile;
       _templates = templates;
+      _reminderOn = reminderOn;
     });
   }
 
@@ -124,6 +130,23 @@ class MinePageState extends State<MinePage> {
             onTap: () => _openTraining(context),
           ),
 
+          const _SectionTitle('水电提醒'),
+          SwitchListTile(
+            secondary: const Icon(Icons.notifications_active_outlined),
+            title: const Text('水电余额提醒'),
+            subtitle: Text(_reminderOn
+                ? '已开启 · 每整点/半点自动查询，余额不足时通知'
+                : '关闭 · 开启后每整点/半点自动查询，余额不足时通知'),
+            value: _reminderOn,
+            onChanged: (v) => _toggleReminder(context, v),
+          ),
+          _Tile(
+            icon: Icons.settings_backup_restore_outlined,
+            title: '自启动与后台设置指引',
+            subtitle: '提醒依赖应用后台存活，各机型需手动开启',
+            onTap: () => _showAutostartGuide(context),
+          ),
+
           const _SectionTitle('关于'),
           _Tile(
             icon: Icons.info_outline,
@@ -136,6 +159,70 @@ class MinePageState extends State<MinePage> {
             title: '开源许可',
             subtitle: '查看本项目使用的开源项目',
             onTap: () => _showLicenses(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 开/关水电余额提醒。
+  Future<void> _toggleReminder(BuildContext context, bool value) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (value) {
+      final profile = await ProfileRepository.load();
+      if (!mounted) return;
+      if (profile.studentId.isEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('请先在「修改个人信息」里填写学号')),
+        );
+        return;
+      }
+      final granted = await UtilityReminder.requestNotificationPermission();
+      await UtilityReminder.enable();
+      if (!mounted) return;
+      setState(() => _reminderOn = true);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            granted
+                ? '已开启提醒，正在查询一次当前余额'
+                : '已开启提醒，但未授予通知权限，通知将无法弹出',
+          ),
+        ),
+      );
+    } else {
+      await UtilityReminder.disable();
+      if (!mounted) return;
+      setState(() => _reminderOn = false);
+    }
+  }
+
+  /// 自启动与后台设置指引（各厂商没有统一 API，只能列路径让用户手动开）。
+  void _showAutostartGuide(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.settings_suggest_outlined, size: 36),
+        title: const Text('自启动与后台设置'),
+        content: const SingleChildScrollView(
+          child: Text(
+            '水电提醒依赖应用进程存活，进程被清理后将无法查询和提醒。'
+            '请在系统设置中手动开启：\n\n'
+            '· 小米：设置 → 应用设置 → 应用管理 → 掌上砚园 → 自启动\n'
+            '· 华为 / 荣耀：设置 → 应用 → 应用启动管理 → 掌上砚园 → '
+            '改为手动管理并允许自启动、关联启动、后台活动\n'
+            '· OPPO / 一加：设置 → 应用 → 应用管理 → 掌上砚园 → '
+            '允许自启动与关联启动\n'
+            '· vivo：设置 → 应用 → 权限管理 → 掌上砚园 → 允许后台高耗电\n'
+            '· 原生 / 其他：一般无需设置\n\n'
+            '另外建议在最近任务里下拉锁定本应用，避免被一键清理。',
+            style: TextStyle(fontSize: 13, height: 1.6),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
           ),
         ],
       ),

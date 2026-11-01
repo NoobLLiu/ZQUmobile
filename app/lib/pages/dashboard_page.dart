@@ -773,6 +773,7 @@ class DashboardPageState extends State<DashboardPage> {
                   label: '电费余额',
                   value: room == null ? '未查到' : _fmt(room.electricity),
                   unit: room == null ? '' : '度',
+                  low: room != null && isElectricityLow(room.electricity),
                   onTap: _openUtilityPage,
                 ),
               ),
@@ -784,6 +785,7 @@ class DashboardPageState extends State<DashboardPage> {
                   label: '水费余额',
                   value: room == null ? '未查到' : _fmt(room.water),
                   unit: room == null ? '' : '吨',
+                  low: room != null && isWaterLow(room.water),
                   onTap: _openUtilityPage,
                 ),
               ),
@@ -805,7 +807,7 @@ class DashboardPageState extends State<DashboardPage> {
   }
 }
 
-/// 生活数据里的一个极简余额卡：图标 + 数字 + 淡灰单位。
+/// 生活数据里的一个极简余额卡：图标 + 数字 + 淡灰单位，低余额时数字标红。
 class _UtilityCard extends StatelessWidget {
   const _UtilityCard({
     required this.icon,
@@ -814,6 +816,7 @@ class _UtilityCard extends StatelessWidget {
     required this.value,
     required this.unit,
     required this.onTap,
+    this.low = false,
   });
 
   final IconData icon;
@@ -823,9 +826,13 @@ class _UtilityCard extends StatelessWidget {
   final String unit;
   final VoidCallback onTap;
 
+  /// 是否低于阈值（数字标红）。
+  final bool low;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final valueColor = low ? scheme.error : scheme.onSurface;
     return Material(
       color: scheme.surfaceContainerHigh,
       borderRadius: BorderRadius.circular(14),
@@ -855,6 +862,7 @@ class _UtilityCard extends StatelessWidget {
                           style: TextStyle(
                             fontSize: value == '未查到' ? 14 : 18,
                             fontWeight: FontWeight.w500,
+                            color: valueColor,
                           ),
                         ),
                         if (unit.isNotEmpty) ...[

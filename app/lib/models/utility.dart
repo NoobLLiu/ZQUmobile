@@ -1,6 +1,18 @@
 /// 宿舍水电余额数据模型。
 library;
 
+/// 电费低余额阈值（度）：低于等于该值时界面标红、提醒服务告警。
+const double kLowElectricity = 5.0;
+
+/// 水费低余额阈值（吨）：低于等于该值时界面标红、提醒服务告警。
+const double kLowWater = 1.0;
+
+/// 电费是否低于阈值。
+bool isElectricityLow(double v) => v <= kLowElectricity;
+
+/// 水费是否低于阈值。
+bool isWaterLow(double v) => v <= kLowWater;
+
 /// 一个宿舍房间的水电剩余量。
 class UtilityRoom {
   const UtilityRoom({

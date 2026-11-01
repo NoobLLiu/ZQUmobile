@@ -4,10 +4,11 @@
 /// 看板为默认首页，汇聚今日课程与生活数据。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import 'pages/attachment_schedule_page.dart';
-import 'pages/dashboard_page.dart';
+import 'pages/attachment_schedule_page.dart';import 'pages/dashboard_page.dart';
 import 'pages/express_station_page.dart';
 import 'pages/home_page.dart';
 import 'pages/jwgl_login_page.dart';
@@ -16,9 +17,18 @@ import 'pages/notice_rewrite_page.dart';
 import 'pages/timetable_page.dart';
 import 'pages/utility_page.dart';
 import 'services/profile_repository.dart';
+import 'services/utility_reminder.dart';
 import 'widgets/profile_dialog.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // 若用户开启了水电余额提醒，恢复整点/半点的定时查询。
+  // 桌面端/异常环境没有通知插件实现也不影响启动，故静默吞错。
+  unawaited(() async {
+    try {
+      await UtilityReminder.startIfEnabled();
+    } catch (_) {}
+  }());
   runApp(const ZhangShangZhaoYuanApp());
 }
 
@@ -84,7 +94,7 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell> {
+class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   int _index = 0;
 
   final _dashKey = GlobalKey<DashboardPageState>();
@@ -94,8 +104,27 @@ class _RootShellState extends State<RootShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // 首帧后检查个人信息，首次使用或资料不完整时引导填写
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureProfile());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 回到前台：补上后台冻结期间错过的水电检查，并重新对齐定时器。
+    if (state == AppLifecycleState.resumed) {
+      unawaited(() async {
+        try {
+          await UtilityReminder.onAppResumed();
+        } catch (_) {}
+      }());
+    }
   }
 
   Future<void> _ensureProfile() async {
