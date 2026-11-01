@@ -114,6 +114,38 @@ class CaptchaOcr {
   static const double minScore = 0.70;
   static const double minMargin = 0.06;
 
+  /// TTA 角度（度）：0 是原图，其余为小角度旋转后的增广视图。
+  static const List<double> ttaAngles = [0, -4, 4, -8, 8];
+
+  /// 小角度旋转 24x24 字形（双线性逆映射，空白补 0 = 反色后的背景）。
+  static Float32List rotateGlyph(Float32List px, double deg) {
+    final n = glyphSize;
+    final rad = deg * math.pi / 180.0;
+    final ca = math.cos(rad), sa = math.sin(rad);
+    final c = (n - 1) / 2.0;
+    final out = Float32List(n * n);
+    for (var y = 0; y < n; y++) {
+      for (var x = 0; x < n; x++) {
+        final dx = x - c, dy = y - c;
+        final sx = ca * dx + sa * dy + c;
+        final sy = -sa * dx + ca * dy + c;
+        out[y * n + x] = _bilinearF(px, n, sx, sy);
+      }
+    }
+    return out;
+  }
+
+  static double _bilinearF(Float32List px, int n, double x, double y) {
+    if (x < 0 || y < 0 || x > n - 1 || y > n - 1) return 0;
+    final x0 = x.floor(), y0 = y.floor();
+    final x1 = math.min(x0 + 1, n - 1), y1 = math.min(y0 + 1, n - 1);
+    final fx = x - x0, fy = y - y0;
+    return px[y0 * n + x0] * (1 - fx) * (1 - fy) +
+        px[y0 * n + x1] * fx * (1 - fy) +
+        px[y1 * n + x0] * (1 - fx) * fy +
+        px[y1 * n + x1] * fx * fy;
+  }
+
   /// 解码 → 切字 → 归一化。切不出 4~6 个字时返回 null。
   static CaptchaSegmentation? segment(Uint8List jpegBytes) {
     final decoded = img.decodeImage(jpegBytes);
@@ -144,6 +176,48 @@ class CaptchaOcr {
         .toList();
     if (bs.length < minGlyphs || bs.length > maxGlyphs) return null;
 
+    // 拆分粘连字块：两个字符写在一起时会连成一个宽块，直接丢掉太可惜
+    // （这类占真实验证码的 ~20%）。按中位宽估计每块含几个字，在「墨水最少
+    // 的列」切开。切错了也没关系——后面有置信度门禁兜底，只影响触发率。
+    final wds = bs.map((b) => b[2] - b[0]).toList()..sort();
+    final medW = wds[wds.length ~/ 2].toDouble();
+    final mask = _mask(g);
+    final split = <List<int>>[];
+    for (final b in bs) {
+      final w = b[2] - b[0];
+      final k = (w / medW).round();
+      if (k <= 1 || w < medW * 1.4) {
+        split.add(b);
+        continue;
+      }
+      final cuts = <int>[b[0]];
+      for (var j = 1; j < k; j++) {
+        final target = b[0] + (w * j / k).round();
+        final lo = math.max(b[0] + 2, target - (medW / 2.5).floor());
+        final hi = math.min(b[2] - 2, target + (medW / 2.5).floor());
+        var bestX = target, bestInk = 1 << 30;
+        for (var x = lo; x <= hi; x++) {
+          var ink = 0;
+          for (var y = b[1]; y < b[3]; y++) {
+            ink += mask[y * g.w + x];
+          }
+          if (ink < bestInk) {
+            bestInk = ink;
+            bestX = x;
+          }
+        }
+        cuts.add(bestX);
+      }
+      cuts.add(b[2]);
+      for (var j = 0; j < cuts.length - 1; j++) {
+        if (cuts[j + 1] - cuts[j] >= minWidth) {
+          split.add([cuts[j], b[1], cuts[j + 1], b[3]]);
+        }
+      }
+    }
+    bs = split;
+    if (bs.length < minGlyphs || bs.length > maxGlyphs) return null;
+
     final glyphs = bs.map((b) => CaptchaGlyph(_normalize(g, b), b)).toList();
     return CaptchaSegmentation(
       glyphs: glyphs,
@@ -154,6 +228,9 @@ class CaptchaOcr {
   }
 
   /// 识别整串。
+  ///
+  /// 每个字形额外做小角度旋转（TTA）：整体摆正后各字符仍有自己的随机倾角，
+  /// 取各角度下最高的相关分，能明显减少因倾斜导致的误判。
   static CaptchaPrediction? predict(
     Uint8List jpegBytes,
     CaptchaTemplates templates,
@@ -167,19 +244,29 @@ class CaptchaOcr {
     String? reason;
 
     for (final glyph in seg.glyphs) {
-      final ranked = templates.rank(glyph.pixels);
-      if (ranked.isEmpty) {
+      MapEntry<String, double>? bestEntry;
+      var bestSecond = 0.0;
+      for (final deg in ttaAngles) {
+        final px =
+            deg == 0 ? glyph.pixels : rotateGlyph(glyph.pixels, deg);
+        final ranked = templates.rank(px);
+        if (ranked.isEmpty) continue;
+        final second = ranked.length > 1 ? ranked[1].value : 0.0;
+        if (bestEntry == null || ranked.first.value > bestEntry.value) {
+          bestEntry = ranked.first;
+          bestSecond = second;
+        }
+      }
+      if (bestEntry == null) {
         reason = '还没有训练数据';
         sb.write('?');
         scores.add(0);
         margins.add(0);
         continue;
       }
-      final best = ranked.first;
-      final second = ranked.length > 1 ? ranked[1].value : 0.0;
-      sb.write(best.key);
-      scores.add(best.value);
-      margins.add(best.value - second);
+      sb.write(bestEntry.key);
+      scores.add(bestEntry.value);
+      margins.add(bestEntry.value - bestSecond);
     }
 
     final ok = reason == null &&

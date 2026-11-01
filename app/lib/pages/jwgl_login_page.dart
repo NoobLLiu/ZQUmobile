@@ -116,6 +116,12 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   /// 一次登录流程里最多自动提交几次识别结果。
   static const int _maxOcrAttempts = 2;
 
+  /// 本轮登录里因「识别没把握」自动换图的次数。
+  int _ocrRefreshes = 0;
+
+  /// 换图上限：超过就转手动输入（避免无限刷 /yzm 触发接口限流）。
+  static const int _maxOcrRefreshes = 4;
+
   /// 验证码识别的辅助提示（识别没把握时提示已填入的内容）。
   String? _ocrHint;
 
@@ -445,13 +451,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     }
 
     final pred = CaptchaOcr.predict(bytes, _templates);
-    if (pred == null) {
-      setState(() => _ocrHint = '验证码切字失败，请手动输入');
-      return;
-    }
-
-    final lengthOk = expected <= 0 || pred.text.length == expected;
-    if (pred.ok && lengthOk) {
+    final lengthOk = pred != null &&
+        (expected <= 0 || pred.text.length == expected);
+    if (pred != null && pred.ok && lengthOk) {
       _ocrAttempts++;
       setState(() {
         _autoCaptcha = false;
@@ -461,12 +463,27 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       return;
     }
 
-    // 识别没把握：把猜测填进输入框，用户核对一下就能提交
-    if (lengthOk && pred.text.isNotEmpty && !pred.text.contains('?')) {
+    // 识别没把握：自动换一张再认（用户要求）。每张验证码能认准的概率有限，
+    // 换几张里总有一张简单的；换图次数用完才退回手动输入。
+    final reason = pred == null
+        ? '切字失败'
+        : (lengthOk ? (pred.reason ?? '置信度不足') : '位数不符');
+    if (_ocrRefreshes < _maxOcrRefreshes) {
+      _ocrRefreshes++;
+      _refreshCaptcha();
+      setState(() {
+        _autoStep = '这张不好认（$reason），自动换一张'
+            '（$_ocrRefreshes/$_maxOcrRefreshes）...';
+      });
+      return;
+    }
+
+    // 换图次数也用完了：把猜测填进输入框，用户核对一下就能提交
+    if (pred != null && lengthOk && !pred.text.contains('?')) {
       _captchaCtrl.text = pred.text;
     }
     setState(() {
-      _ocrHint = '自动识别没把握（${pred.reason ?? '位数不符'}）'
+      _ocrHint = '连续 $_maxOcrRefreshes 张都没把握（$reason）'
           '${_captchaCtrl.text.isEmpty ? '' : '，已填入猜测值请核对'}';
     });
   }
@@ -639,6 +656,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
     // 每次页面加载都是新一轮登录：重置识别代填的尝试次数
     _ocrAttempts = 0;
+    _ocrRefreshes = 0;
 
     final profile = _profile;
     final expect = (profile.hasCampusNetwork || _submittedJwgl)
