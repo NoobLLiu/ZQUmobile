@@ -172,12 +172,25 @@ ExpressStatusResult evaluateExpressStation(
 /// 预先录入的驿站数据（以驿站现场公告为准，欢迎反馈补充）。
 final List<ExpressStationGroup> kExpressStationGroups = [
   ExpressStationGroup(
+    name: '校内',
+    stations: [
+      ExpressStation(
+        name: '京东快递站',
+        hours: TimeRange.hhmm('10:00', '19:00'),
+      ),
+      ExpressStation(
+        name: '顺丰营业点',
+        hours: TimeRange.hhmm('10:00', '19:00'),
+      ),
+    ],
+  ),
+  ExpressStationGroup(
     name: '东门',
     gateHours: TimeRange.hhmm('07:00', '23:00'),
     stations: [
       ExpressStation(
         name: '东门菜鸟驿站',
-        hours: TimeRange.hhmm('07:00', '23:00'),
+        hours: TimeRange.hhmm('10:00', '23:00'),
       ),
       ExpressStation(
         name: '东门申通快递',

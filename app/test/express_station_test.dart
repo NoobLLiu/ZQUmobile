@@ -150,10 +150,17 @@ void main() {
   });
 
   group('预录入数据', () {
-    test('东门 4 家驿站且带校门时间，南门 1 家待补充', () {
+    test('校内 2 家、东门 4 家且带校门时间，南门 1 家待补充', () {
+      final campus = _group('校内');
+      expect(campus.gateHours, isNull);
+      expect(campus.stations, hasLength(2));
+      expect(_station('京东快递站').hours!.format(), '10:00-19:00');
+      expect(_station('顺丰营业点').hours!.format(), '10:00-19:00');
+
       final east = _group('东门');
       expect(east.gateHours!.format(), '07:00-23:00');
       expect(east.stations, hasLength(4));
+      expect(_station('东门菜鸟驿站').hours!.format(), '10:00-23:00');
       expect(_group('南门').gateHours, isNull);
       expect(_station('南门车库驿站').hasData, isFalse);
     });
@@ -177,14 +184,20 @@ void main() {
       await pumpPage(tester, clock: () => _at(28, 15));
 
       expect(find.text('快递站状态'), findsOneWidget);
+      expect(find.text('校内'), findsOneWidget);
       expect(find.text('东门'), findsOneWidget);
       expect(find.text('南门'), findsOneWidget);
       expect(find.text('校门开放 07:00-23:00'), findsOneWidget);
+      expect(find.text('京东快递站'), findsOneWidget);
+      expect(find.text('顺丰营业点'), findsOneWidget);
       expect(find.text('东门菜鸟驿站'), findsOneWidget);
       expect(find.text('菜鸟の茶驿站'), findsOneWidget);
       expect(find.text('南门车库驿站'), findsOneWidget);
-      // 东门 4 家全部营业中
-      expect(find.text('营业中'), findsNWidgets(4));
+      // 顶部不再显示当前时间与刷新提示
+      expect(find.textContaining('每 30 秒'), findsNothing);
+      expect(find.textContaining('现在 '), findsNothing);
+      // 校内 2 家 + 东门 4 家全部营业中
+      expect(find.text('营业中'), findsNWidgets(6));
       // 南门车库驿站灰卡
       expect(find.text('数据待补充'), findsOneWidget);
       expect(find.text('营业时间待录入'), findsOneWidget);
@@ -193,10 +206,9 @@ void main() {
     testWidgets('未营业时提示开门时间（周三 08:00）', (tester) async {
       await pumpPage(tester, clock: () => _at(28, 8));
 
-      // 菜鸟驿站 07:00 已开门
-      expect(find.text('营业中'), findsOneWidget);
-      // 其余三家 10:00 开门
-      expect(find.text('未营业 · 10:00 开门'), findsNWidgets(3));
+      // 菜鸟驿站已改为 10:00 开门，6 家全部未到开门时间
+      expect(find.text('营业中'), findsNothing);
+      expect(find.text('未营业 · 10:00 开门'), findsNWidgets(6));
     });
 
     testWidgets('距打烊不足 30 分钟显示剩余分钟（周三 22:50）', (tester) async {
@@ -204,8 +216,8 @@ void main() {
 
       // 菜鸟驿站 23:00 关门，剩 10 分钟
       expect(find.text('即将打烊 · 剩 10 分钟'), findsOneWidget);
-      // 其余三家均已打烊
-      expect(find.text('已打烊'), findsNWidgets(3));
+      // 其余五家均已打烊
+      expect(find.text('已打烊'), findsNWidgets(5));
     });
 
     testWidgets('周五使用特殊营业时间并标注「今日」（周五 10:30）', (tester) async {
@@ -213,7 +225,7 @@ void main() {
 
       expect(find.text('未营业 · 11:00 开门'), findsOneWidget);
       expect(find.text('今日 11:00-20:50'), findsOneWidget);
-      expect(find.text('营业中'), findsNWidgets(3));
+      expect(find.text('营业中'), findsNWidgets(5));
     });
 
     testWidgets('点分组栏可折叠/展开该组', (tester) async {
@@ -239,16 +251,19 @@ void main() {
       var fakeNow = _at(28, 15);
       await pumpPage(tester, clock: () => fakeNow);
 
-      expect(find.textContaining('现在 15:00'), findsOneWidget);
+      expect(find.text('营业中'), findsNWidgets(6));
 
       // 时间走到 20:40，推进 30 秒触发定时器
       fakeNow = _at(28, 20, 40);
       await tester.pump(const Duration(seconds: 30));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('现在 20:40'), findsOneWidget);
+      // 校内两家 19:00 已打烊
+      expect(find.text('已打烊'), findsNWidgets(2));
       // 申通与肯德基（周三默认 10:00-21:00）→ 剩 20 分钟，双双转黄
       expect(find.text('即将打烊 · 剩 20 分钟'), findsNWidgets(2));
+      // 菜鸟与菜鸟の茶仍在营业
+      expect(find.text('营业中'), findsNWidgets(2));
     });
   });
 
@@ -282,8 +297,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // 进入快递站状态页（功能页宫格的同名卡片仍在导航栈下层）
-      expect(find.text('东门'), findsOneWidget);
-      expect(find.textContaining('每 30 秒自动刷新'), findsOneWidget);
+      expect(find.text('校内'), findsOneWidget);
+      expect(find.text('京东快递站'), findsOneWidget);
     });
   });
 }

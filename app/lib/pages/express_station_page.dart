@@ -68,7 +68,7 @@ class _ExpressStationPageState extends State<ExpressStationPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          _TimeBanner(now: _now),
+          const _LegendBar(),
           const SizedBox(height: 12),
           for (final group in kExpressStationGroups) ...[
             _GroupSection(
@@ -95,53 +95,29 @@ class _ExpressStationPageState extends State<ExpressStationPage> {
   }
 }
 
-/// 顶部时间条：当前时间 + 状态色图例。
-class _TimeBanner extends StatelessWidget {
-  const _TimeBanner({required this.now});
-
-  final DateTime now;
-
-  static const _weekdayNames = [
-    '周一',
-    '周二',
-    '周三',
-    '周四',
-    '周五',
-    '周六',
-    '周日',
-  ];
+/// 顶部图例条：状态色说明（不显示当前时间，页面后台每 30 秒静默刷新）。
+class _LegendBar extends StatelessWidget {
+  const _LegendBar();
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    String p(int n) => n.toString().padLeft(2, '0');
-    final weekday = _weekdayNames[now.weekday - 1];
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.schedule, size: 16, color: theme.colorScheme.primary),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              '现在 ${p(now.hour)}:${p(now.minute)}（$weekday）· 每 30 秒自动刷新',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
           _LegendDot(color: _kGreenBase, label: '营业'),
-          const SizedBox(width: 4),
+          SizedBox(width: 12),
           _LegendDot(color: _kAmberBase, label: '将打烊'),
-          const SizedBox(width: 4),
+          SizedBox(width: 12),
           _LegendDot(color: _kRedBase, label: '未营业'),
+          SizedBox(width: 12),
+          _LegendDot(color: _kGrayBase, label: '待补充'),
         ],
       ),
     );
