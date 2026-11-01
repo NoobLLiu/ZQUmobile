@@ -1,9 +1,9 @@
-/// 首页：按分类展示功能入口。
+/// 功能页：按分类展示功能入口。
 library;
 
 import 'package:flutter/material.dart';
 
-/// 一个可从首页进入的功能。
+/// 一个可从功能页进入的功能。
 class HomeFeature {
   const HomeFeature({
     required this.title,
@@ -24,7 +24,7 @@ class HomeFeature {
   final String? tag;
 }
 
-/// 首页的一个功能分类。
+/// 功能页的一个功能分类。
 class HomeSection {
   const HomeSection({required this.title, required this.features});
 
@@ -32,7 +32,7 @@ class HomeSection {
   final List<HomeFeature> features;
 }
 
-/// 首页。
+/// 功能页。
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 

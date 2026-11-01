@@ -1,7 +1,7 @@
 /// 掌上砚园 —— 肇庆学院校园助手。
 ///
-/// 主框架：底部导航「首页」「我的」，
-/// 首页按分类列功能入口，可进入课表、教务系统登录等功能。
+/// 主框架：底部导航「功能页」「我的」，
+/// 功能页按分类列功能入口，可进入课表、教务系统登录等功能。
 library;
 
 import 'package:flutter/material.dart';
@@ -73,7 +73,7 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
   }
 }
 
-/// 底部导航外壳：首页 / 我的。
+/// 底部导航外壳：功能页 / 我的。
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
@@ -127,9 +127,9 @@ class _RootShellState extends State<RootShell> {
         },
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: '首页',
+            icon: Icon(Icons.grid_view_outlined),
+            selectedIcon: Icon(Icons.grid_view),
+            label: '功能页',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),

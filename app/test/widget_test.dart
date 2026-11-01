@@ -30,13 +30,13 @@ void main() {
   testWidgets('应用能启动并显示底部导航', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
-    // 底部导航应有两个目的地：首页 / 我的
+    // 底部导航应有两个目的地：功能页 / 我的
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.text('首页'), findsOneWidget);
+    expect(find.text('功能页'), findsOneWidget);
     expect(find.text('我的'), findsOneWidget);
   });
 
-  testWidgets('首页按分类展示功能入口', (WidgetTester tester) async {
+  testWidgets('功能页按分类展示功能入口', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
     // 顶部只留「掌上砚园」，蓝色头部与副标题都去掉了
@@ -90,7 +90,7 @@ void main() {
     expect(find.textContaining('未训练'), findsOneWidget);
   });
 
-  testWidgets('首页可以进入通知转写', (WidgetTester tester) async {
+  testWidgets('功能页可以进入通知转写', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
     // 宫格第二行默认在首屏之外，先滚一点

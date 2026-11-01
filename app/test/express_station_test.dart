@@ -252,8 +252,8 @@ void main() {
     });
   });
 
-  group('首页入口', () {
-    testWidgets('首页宫格可以进入快递站状态页', (tester) async {
+  group('功能页入口', () {
+    testWidgets('功能页宫格可以进入快递站状态页', (tester) async {
       SharedPreferences.setMockInitialValues({
         'zsy_profile': '{"studentId":"202301010101","term":"2026-2027-1",'
             '"hasCampusNetwork":true,"webvpnPassword":"vpn-pass",'
@@ -273,7 +273,7 @@ void main() {
       await tester.tap(find.text('快递站状态'));
       await tester.pumpAndSettle();
 
-      // 进入快递站状态页（首页宫格的同名卡片仍在导航栈下层）
+      // 进入快递站状态页（功能页宫格的同名卡片仍在导航栈下层）
       expect(find.text('东门'), findsOneWidget);
       expect(find.textContaining('每 30 秒自动刷新'), findsOneWidget);
     });

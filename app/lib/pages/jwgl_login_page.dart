@@ -38,7 +38,7 @@ import '../widgets/conflict_dialog.dart';
 /// 教务系统页面。
 ///
 /// 两种用法：
-///   - 纯登录（[allowImport] = false）：从首页「教务系统」进入，
+///   - 纯登录（[allowImport] = false）：从功能页「教务系统」进入，
 ///     只做快捷访问与自动登录，不提供导入功能；
 ///   - 导入模式（[allowImport] = true）：从课表页进入，
 ///     底部提供「执行导入」抓取课表。
@@ -46,7 +46,7 @@ class JwglLoginPage extends StatefulWidget {
   const JwglLoginPage({super.key, this.allowImport = false});
 
   /// 是否显示「执行导入」（抓取课表）。
-  /// 首页进入时只登录，不做导入。
+  /// 功能页进入时只登录，不做导入。
   final bool allowImport;
 
   @override
