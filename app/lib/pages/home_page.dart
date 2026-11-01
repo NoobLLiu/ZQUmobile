@@ -83,6 +83,12 @@ class HomePageState extends State<HomePage> {
         icon: Icons.water_drop_outlined,
         route: '/utility',
       ),
+      const HomeFeature(
+        title: '快递站状态',
+        subtitle: '各驿站实时营业状态，红黄绿一眼看懂',
+        icon: Icons.local_shipping_outlined,
+        route: '/express',
+      ),
     ];
 
     return Scaffold(
