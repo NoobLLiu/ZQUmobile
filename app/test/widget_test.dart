@@ -36,12 +36,30 @@ void main() {
     expect(find.text('我的'), findsOneWidget);
   });
 
-  testWidgets('首页展示功能入口', (WidgetTester tester) async {
+  testWidgets('首页按分类展示功能入口', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
-    expect(find.textContaining('掌上砚园'), findsWidgets);
+    // 顶部只留「掌上砚园」，蓝色头部与副标题都去掉了
+    expect(find.text('掌上砚园'), findsOneWidget);
+    expect(find.textContaining('肇庆学院校园助手'), findsNothing);
+    expect(find.text('课表已就绪'), findsNothing);
+
+    expect(find.text('学习功能'), findsOneWidget);
     expect(find.text('我的课表'), findsOneWidget);
     expect(find.text('教务系统'), findsOneWidget);
+    expect(find.text('班委工作'), findsOneWidget);
+    expect(find.text('通知转写'), findsOneWidget);
+    // AI 小标签
+    expect(find.text('AI'), findsOneWidget);
+    // 不再有「全部功能」
+    expect(find.text('全部功能'), findsNothing);
+
+    // 「校园生活」在首屏之外，滚一点再断言
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -240));
+    await tester.pumpAndSettle();
+    expect(find.text('校园生活'), findsOneWidget);
+    expect(find.text('水电余额'), findsOneWidget);
+    expect(find.text('快递站状态'), findsOneWidget);
   });
 
   testWidgets('切换到「我的」标签显示我的页面', (WidgetTester tester) async {

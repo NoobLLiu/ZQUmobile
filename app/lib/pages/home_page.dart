@@ -1,10 +1,7 @@
-/// 首页：功能入口宫格。
+/// 首页：按分类展示功能入口。
 library;
 
 import 'package:flutter/material.dart';
-
-import '../core/build_info.dart';
-import '../services/timetable_repository.dart';
 
 /// 一个可从首页进入的功能。
 class HomeFeature {
@@ -13,7 +10,7 @@ class HomeFeature {
     required this.subtitle,
     required this.icon,
     required this.route,
-    this.enabled = true,
+    this.tag,
   });
 
   final String title;
@@ -23,229 +20,244 @@ class HomeFeature {
   /// 目标路由。
   final String route;
 
-  /// 是否已开放（未开放的功能置灰并提示）。
-  final bool enabled;
+  /// 标题右侧的小标签（如「AI」）。
+  final String? tag;
+}
+
+/// 首页的一个功能分类。
+class HomeSection {
+  const HomeSection({required this.title, required this.features});
+
+  final String title;
+  final List<HomeFeature> features;
 }
 
 /// 首页。
-class HomePage extends StatefulWidget {
+class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
-  @override
-  State<HomePage> createState() => HomePageState();
-}
-
-/// 首页状态（对外暴露以便外部在登录返回后刷新）。
-class HomePageState extends State<HomePage> {
-  bool _hasTimetable = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _refreshState();
-  }
-
-  Future<void> _refreshState() async {
-    final tt = await TimetableRepository.load();
-    if (!mounted) return;
-    setState(() => _hasTimetable = tt != null);
-  }
-
-  /// 供外部在登录页返回后调用。
-  void reload() => _refreshState();
+  /// 功能分类。文案改动直接改这里。
+  static const List<HomeSection> sections = [
+    HomeSection(
+      title: '学习功能',
+      features: [
+        HomeFeature(
+          title: '我的课表',
+          subtitle: '快捷查看本学期课表',
+          icon: Icons.calendar_month_outlined,
+          route: '/timetable',
+        ),
+        HomeFeature(
+          title: '教务系统',
+          subtitle: '快速访问并自动登录教务系统',
+          icon: Icons.school_outlined,
+          route: '/jwgl',
+        ),
+      ],
+    ),
+    HomeSection(
+      title: '班委工作',
+      features: [
+        HomeFeature(
+          title: '通知转写',
+          tag: 'AI',
+          subtitle: '一键转写学院下发的通知，快捷发布班群',
+          icon: Icons.edit_note_outlined,
+          route: '/notice',
+        ),
+      ],
+    ),
+    HomeSection(
+      title: '校园生活',
+      features: [
+        HomeFeature(
+          title: '水电余额',
+          subtitle: '快速查询宿舍水电余量，可设置充值提醒',
+          icon: Icons.water_drop_outlined,
+          route: '/utility',
+        ),
+        HomeFeature(
+          title: '快递站状态',
+          subtitle: '看看现在快递站关门没，决定是否拿快递',
+          icon: Icons.local_shipping_outlined,
+          route: '/express',
+        ),
+      ],
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    final features = <HomeFeature>[
-      const HomeFeature(
-        title: '我的课表',
-        subtitle: '周视图课程表，支持周次切换',
-        icon: Icons.calendar_month_outlined,
-        route: '/timetable',
-      ),
-      const HomeFeature(
-        title: '教务系统',
-        subtitle: '登录肇庆学院教务系统（校内直连 / WebVPN）',
-        icon: Icons.school_outlined,
-        route: '/jwgl',
-      ),
-      const HomeFeature(
-        title: '通知转写',
-        subtitle: '班委群通知一键改写成班级群版本，AI 代笔',
-        icon: Icons.edit_note_outlined,
-        route: '/notice',
-      ),
-      const HomeFeature(
-        title: '水电费查询',
-        subtitle: '宿舍水电余额一键查看，本地缓存秒开',
-        icon: Icons.water_drop_outlined,
-        route: '/utility',
-      ),
-      const HomeFeature(
-        title: '快递站状态',
-        subtitle: '各驿站实时营业状态，红黄绿一眼看懂',
-        icon: Icons.local_shipping_outlined,
-        route: '/express',
-      ),
-    ];
-
     return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          '掌上砚园',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
       body: CustomScrollView(
         slivers: [
-          // 顶部欢迎区
-          SliverAppBar(
-            pinned: true,
-            expandedHeight: 168,
-            flexibleSpace: FlexibleSpaceBar(
-              titlePadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-              title: const Text('掌上砚园',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      theme.colorScheme.primary,
-                      theme.colorScheme.primary.withValues(alpha: 0.75),
-                    ],
-                  ),
-                ),
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 60, 20, 0),
-                    child: Align(
-                      alignment: Alignment.topLeft,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '肇庆学院校园助手 · v${BuildInfo.version}',
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              color: Colors.white.withValues(alpha: 0.9),
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            _hasTimetable ? '课表已就绪' : '尚未导入课表',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.white.withValues(alpha: 0.75),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // 功能宫格
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-            sliver: SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('全部功能',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 12),
-                  GridView.count(
-                    crossAxisCount: 2,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 1.35,
-                    children: [
-                      for (final f in features) _FeatureCard(feature: f),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
+          for (final section in sections) ...[
+            SliverToBoxAdapter(child: _SectionTitle(section.title)),
+            SliverToBoxAdapter(child: _SectionCard(features: section.features)),
+          ],
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
     );
   }
 }
 
-/// 功能卡片。
-class _FeatureCard extends StatelessWidget {
-  const _FeatureCard({required this.feature});
+/// 分类标题。
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+      child: Text(
+        text,
+        style: theme.textTheme.labelLarge?.copyWith(
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.4,
+        ),
+      ),
+    );
+  }
+}
+
+/// 一个分类下的功能卡片（行之间用细线分隔）。
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({required this.features});
+
+  final List<HomeFeature> features;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Card(
+        color: theme.colorScheme.surfaceContainerLow,
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            for (var i = 0; i < features.length; i++) ...[
+              if (i > 0)
+                Divider(
+                  height: 1,
+                  thickness: 1,
+                  indent: 68,
+                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                ),
+              _FeatureRow(feature: features[i]),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 单个功能行。
+class _FeatureRow extends StatelessWidget {
+  const _FeatureRow({required this.feature});
 
   final HomeFeature feature;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final enabled = feature.enabled;
+    final scheme = theme.colorScheme;
+    final tag = feature.tag;
 
-    return Card(
-      color: enabled
-          ? theme.colorScheme.surfaceContainerLow
-          : theme.colorScheme.surfaceContainerLowest,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: enabled
-            ? () => Navigator.of(context).pushNamed(feature.route)
-            : () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('${feature.title} 功能开发中')),
-                );
-              },
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: enabled
-                      ? theme.colorScheme.primary.withValues(alpha: 0.12)
-                      : theme.colorScheme.outline.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  feature.icon,
-                  size: 22,
-                  color: enabled
-                      ? theme.colorScheme.primary
-                      : theme.colorScheme.outline,
-                ),
+    return InkWell(
+      onTap: () => Navigator.of(context).pushNamed(feature.route),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
               ),
-              Column(
+              child: Icon(feature.icon, size: 22, color: scheme.primary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    feature.title,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: enabled
-                          ? theme.colorScheme.onSurface
-                          : theme.colorScheme.outline,
-                    ),
+                  Row(
+                    children: [
+                      Text(
+                        feature.title,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                      if (tag != null) ...[
+                        const SizedBox(width: 6),
+                        _TagChip(text: tag),
+                      ],
+                    ],
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Text(
                     feature.subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.outline),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.outline,
+                      height: 1.3,
+                    ),
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right, size: 20, color: scheme.outlineVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 标题后的高亮小标签。
+class _TagChip extends StatelessWidget {
+  const _TagChip({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: scheme.primary,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          height: 1.4,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.4,
+          color: scheme.onPrimary,
         ),
       ),
     );

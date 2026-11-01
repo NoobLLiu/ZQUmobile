@@ -1,7 +1,7 @@
 /// 掌上砚园 —— 肇庆学院校园助手。
 ///
 /// 主框架：底部导航「首页」「我的」，
-/// 首页是功能入口宫格，可进入课表、教务系统登录等功能。
+/// 首页按分类列功能入口，可进入课表、教务系统登录等功能。
 library;
 
 import 'package:flutter/material.dart';
@@ -84,7 +84,6 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _index = 0;
 
-  final _homeKey = GlobalKey<HomePageState>();
   final _mineKey = GlobalKey<MinePageState>();
 
   @override
@@ -115,7 +114,7 @@ class _RootShellState extends State<RootShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          HomePage(key: _homeKey),
+          const HomePage(),
           MinePage(key: _mineKey),
         ],
       ),
@@ -123,12 +122,8 @@ class _RootShellState extends State<RootShell> {
         selectedIndex: _index,
         onDestinationSelected: (i) {
           setState(() => _index = i);
-          // 切回页面时刷新状态（登录状态、课表是否有数据）
-          if (i == 0) {
-            _homeKey.currentState?.reload();
-          } else {
-            _mineKey.currentState?.reload();
-          }
+          // 切到「我的」时刷新（登录返回后课表、资料可能已变）
+          if (i == 1) _mineKey.currentState?.reload();
         },
         destinations: const [
           NavigationDestination(

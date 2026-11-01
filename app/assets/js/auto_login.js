@@ -36,6 +36,8 @@
     captchaPosted: false,
     captchaRetry: false,
     otherClicked: false,
+    otherClickAt: 0,
+    otherReclicked: false,
     needHelp: false,
     done: false
   };
@@ -336,6 +338,7 @@
 
   /** 在 WebVPN 首页里找「教务系统」入口。 */
   function findJwglLink() {
+    // 传统入口：<a> 或带 data-* / onclick 的元素
     var els = document.querySelectorAll('a[href], [data-url], [data-href], [onclick]');
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
@@ -349,7 +352,73 @@
         return el;
       }
     }
+    // WebVPN 资源门户的卡片：标题含「教务」，点击行为由 JS 动态绑定
+    // （没有 href / onclick 属性，上面的选择器扫不到），要按文本找卡片容器。
+    var heads = document.querySelectorAll(
+      '.block-group__item, .card, .item, li, h1, h2, h3, h4, dt, p, div');
+    for (var j = 0; j < heads.length; j++) {
+      var c = heads[j];
+      var txt = (c.textContent || '').trim();
+      // 标题必须以「教务」开头且整体很短：防止匹配到包含整个列表的大容器
+      if (!/^(教务管理系统|教务系统|教学管理系统)/.test(txt) || txt.length > 30) {
+        continue;
+      }
+      var rect = c.getBoundingClientRect();
+      if (rect.width < 60 || rect.height < 30) continue;
+      // 从标题元素向上找「卡片大小」的容器（卡片点击一般绑在它上面）
+      var card = c;
+      for (var up = 0; up < 6 && card; up++) {
+        var r = card.getBoundingClientRect();
+        if (r.width >= 100 && r.height >= 60 && r.width < window.innerWidth) break;
+        card = card.parentElement;
+      }
+      return card || c;
+    }
     return null;
+  }
+
+  /**
+   * 在**当前窗口**打开入口。
+   *
+   * Flutter WebView 不支持新窗口：门户卡片点击后大多走 window.open 新开
+   * 资源页，直接 click() 会被 WebView 吞掉（表现为「点了没反应」）。
+   * 所以先临时接管 window.open，把目标 URL 捕获下来改成 location.href 跳转。
+   * 有些卡片会先 XHR 再 open，钩子保留 5 秒兜底。
+   */
+  function openEntryInSameWindow(el) {
+    // <a> 的情况直接本窗跳转（含 target=_blank）
+    var a = el.closest ? el.closest('a[href]') : null;
+    if (a && /^https?:/.test(a.href)) {
+      location.href = a.href;
+      return;
+    }
+    var orig = window.open;
+    var restored = false;
+    var restore = function () {
+      if (!restored) {
+        restored = true;
+        window.open = orig;
+      }
+    };
+    window.open = function (u) {
+      var target = String(u || '');
+      restore();
+      post('progress', '捕获资源地址: ' + target.slice(0, 90));
+      if (target && target.indexOf('javascript') !== 0) {
+        location.href = target;
+      }
+      return null;
+    };
+    // 卡片容器和内层都可能绑了点击，各点一次（钩子会合并处理）
+    el.click();
+    var inner = el.querySelector(
+      '.block-group__item__content, .content, h2, h3, .title');
+    if (inner) {
+      setTimeout(function () {
+        if (!restored) inner.click();
+      }, 350);
+    }
+    setTimeout(restore, 5000);
   }
 
   /**
@@ -387,19 +456,34 @@
       return;
     }
 
-    if (did.otherClicked) return;
     var link = findJwglLink();
     if (!link) {
       if (!did.needHelp) {
         did.needHelp = true;
         post('need-help',
-          '请在页面中点击「教务系统」入口，点开后会继续自动登录');
+          '未找到教务入口，请手动点一下「教务管理系统」卡片');
       }
       return;
     }
-    did.otherClicked = true;
-    post('entering-jwgl', '正在进入教务系统 ...');
-    link.click();
+    if (!did.otherClicked) {
+      did.otherClicked = true;
+      did.otherClickAt = Date.now();
+      post('entering-jwgl', '正在进入教务系统 ...');
+      openEntryInSameWindow(link);
+      return;
+    }
+    // 点过但 4 秒后仍停在门户页：再点一次
+    if (Date.now() - did.otherClickAt > 4000 && !did.otherReclicked) {
+      did.otherReclicked = true;
+      openEntryInSameWindow(link);
+      return;
+    }
+    // 10 秒还没进去：放开蒙层请用户手动点一下
+    if (Date.now() - did.otherClickAt > 10000 && !did.needHelp) {
+      did.needHelp = true;
+      post('need-help',
+        '未能自动进入教务系统，请手动点一下「教务管理系统」卡片');
+    }
   }
 
   function finish(message) {
