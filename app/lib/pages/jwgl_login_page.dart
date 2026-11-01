@@ -882,6 +882,15 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   Future<void> _reload() => _controller?.reload() ?? Future.value();
 
   /// 菜单里的「输入网址」：用于在校内直连与 WebVPN 之间切换。
+  ///
+  /// 除手打外提供常用地址快捷项，点一下直接跳转。
+  static const List<(String, String)> quickUrls = [
+    ('教务管理系统', 'https://jwgl.zqu.edu.cn/'),
+    ('WebVPN（已购校园网）', 'https://webvpn.zqu.edu.cn/'),
+    ('WebVPN-free（未购校园网）', 'https://webvpn-free.zqu.edu.cn/'),
+    ('信息门户', 'https://uap.zqu.edu.cn/lyuapServer/login'),
+  ];
+
   Future<void> _editUrl() async {
     final controller = _controller;
     if (controller == null) return;
@@ -897,15 +906,41 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('输入网址'),
-        content: TextField(
-          controller: input,
-          autofocus: true,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            hintText: 'https://jwgl.zqu.edu.cn/',
-            helperText: '校外可填 https://webvpn.zqu.edu.cn/',
+        contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ...quickUrls.map(
+                (e) => ListTile(
+                  dense: true,
+                  title: Text(e.$1),
+                  subtitle: Text(
+                    e.$2,
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  onTap: () => Navigator.of(ctx).pop(e.$2),
+                ),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                child: TextField(
+                  controller: input,
+                  autofocus: true,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    hintText: 'https://jwgl.zqu.edu.cn/',
+                    helperText: '也可以手动输入任意网址',
+                    isDense: true,
+                  ),
+                  onSubmitted: (v) => Navigator.of(ctx).pop(v),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
           ),
-          onSubmitted: (v) => Navigator.of(ctx).pop(v),
         ),
         actions: [
           TextButton(
