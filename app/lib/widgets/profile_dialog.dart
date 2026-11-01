@@ -119,7 +119,6 @@ class _ProfileDialogState extends State<_ProfileDialog> {
     required String field,
     required bool visible,
     required VoidCallback onToggle,
-    String? helper,
   }) {
     return TextField(
       controller: controller,
@@ -128,7 +127,6 @@ class _ProfileDialogState extends State<_ProfileDialog> {
       enableSuggestions: false,
       decoration: InputDecoration(
         labelText: label,
-        helperText: helper,
         errorText: _errorField == field ? _error : null,
         border: const OutlineInputBorder(),
         suffixIcon: IconButton(
@@ -179,7 +177,6 @@ class _ProfileDialogState extends State<_ProfileDialog> {
               field: 'jwgl',
               visible: _showJwglPwd,
               onToggle: () => setState(() => _showJwglPwd = !_showJwglPwd),
-              helper: 'jwgl.zqu.edu.cn 的登录密码',
             ),
             const SizedBox(height: 12),
 
@@ -189,7 +186,6 @@ class _ProfileDialogState extends State<_ProfileDialog> {
               field: 'vpn',
               visible: _showVpnPwd,
               onToggle: () => setState(() => _showVpnPwd = !_showVpnPwd),
-              helper: '校园统一身份认证密码，已购校园网可填同一密码',
             ),
             const SizedBox(height: 16),
 
