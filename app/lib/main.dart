@@ -6,6 +6,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'pages/express_station_page.dart';
 import 'pages/home_page.dart';
 import 'pages/jwgl_login_page.dart';
 import 'pages/mine_page.dart';
@@ -36,6 +37,7 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
         '/jwgl': (ctx) => const JwglLoginPage(),
         '/utility': (ctx) => const UtilityPage(),
         '/notice': (ctx) => const NoticeRewritePage(),
+        '/express': (ctx) => const ExpressStationPage(),
       },
     );
   }
