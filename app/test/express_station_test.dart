@@ -259,9 +259,17 @@ void main() {
             '"hasCampusNetwork":true,"webvpnPassword":"vpn-pass",'
             '"jwglPassword":"jwgl-pass"}',
         'zsy_notice_guide_seen': true,
+        // 新鲜水电缓存，避免看板页发起真实网络请求
+        'zsy_utility_cache':
+            '{"studentId":"202301010101","fetchedAt":${DateTime.now().millisecondsSinceEpoch},'
+            '"rooms":[{"roomName":"12栋 507","electricity":23.6,"water":8.2}]}',
       });
 
       await tester.pumpWidget(const ZhangShangZhaoYuanApp());
+      await tester.pumpAndSettle();
+
+      // 默认在「看板」，先切到「功能页」
+      await tester.tap(find.text('功能页'));
       await tester.pumpAndSettle();
 
       // 宫格第 3 行在首屏之下，分两次拖动滚到位

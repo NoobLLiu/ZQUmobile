@@ -1,7 +1,7 @@
 name: zhangshang_yanyuan
 description: 掌上砚园 —— 肇庆学院校园助手（课表 / 教务系统 / 通知转写 / 快递站状态）。
 publish_to: "none"
-version: 1.8.3+20
+version: 1.9.0+21
 
 environment:
   sdk: ^3.13.7

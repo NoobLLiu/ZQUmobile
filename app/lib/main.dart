@@ -1,11 +1,12 @@
 /// 掌上砚园 —— 肇庆学院校园助手。
 ///
-/// 主框架：底部导航「功能页」「我的」，
-/// 功能页按分类列功能入口，可进入课表、教务系统登录等功能。
+/// 主框架：底部导航「看板」「功能页」「我的」，
+/// 看板为默认首页，汇聚今日课程与生活数据。
 library;
 
 import 'package:flutter/material.dart';
 
+import 'pages/dashboard_page.dart';
 import 'pages/express_station_page.dart';
 import 'pages/home_page.dart';
 import 'pages/jwgl_login_page.dart';
@@ -73,7 +74,7 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
   }
 }
 
-/// 底部导航外壳：功能页 / 我的。
+/// 底部导航外壳：看板 / 功能页 / 我的。
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
@@ -83,6 +84,8 @@ class RootShell extends StatefulWidget {
 
 class _RootShellState extends State<RootShell> {
   int _index = 0;
+
+  final _dashKey = GlobalKey<DashboardPageState>();
 
   final _mineKey = GlobalKey<MinePageState>();
 
@@ -114,6 +117,7 @@ class _RootShellState extends State<RootShell> {
       body: IndexedStack(
         index: _index,
         children: [
+          DashboardPage(key: _dashKey),
           const HomePage(),
           MinePage(key: _mineKey),
         ],
@@ -122,10 +126,17 @@ class _RootShellState extends State<RootShell> {
         selectedIndex: _index,
         onDestinationSelected: (i) {
           setState(() => _index = i);
+          // 切到「看板」时刷新（导入课表、水电数据可能已变）
+          if (i == 0) _dashKey.currentState?.reload();
           // 切到「我的」时刷新（登录返回后课表、资料可能已变）
-          if (i == 1) _mineKey.currentState?.reload();
+          if (i == 2) _mineKey.currentState?.reload();
         },
         destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: '看板',
+          ),
           NavigationDestination(
             icon: Icon(Icons.grid_view_outlined),
             selectedIcon: Icon(Icons.grid_view),

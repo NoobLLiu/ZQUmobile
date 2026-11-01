@@ -1,8 +1,9 @@
 /// 水电费查询页。
 ///
-/// 进入页面用「我的」里已填写的学号自动查询，并按缓存年龄分档：
+/// 进入页面用「我的」里已填写的学号自动查询；缓存/刷新分档与看板页
+/// 共用同一套策略（见 services/utility_provider.dart）：
 ///   - 缓存 10 分钟内：直接展示缓存，不发起请求；
-///   - 缓存 10 分钟 ~ 12 小时：先展示缓存，顶部显示“正在刷新”，
+///   - 缓存 10 分钟 ~ 12 小时：先展示缓存，顶部显示「正在刷新」，
 ///     成功后替换数据；失败则从顶部弹出横条提示；
 ///   - 无缓存或超过 12 小时：与首次进入一样全屏加载。
 library;
@@ -13,15 +14,8 @@ import 'package:flutter/material.dart';
 
 import '../models/utility.dart';
 import '../services/profile_repository.dart';
-import '../services/utility_cache_repository.dart';
-import '../services/utility_service.dart';
+import '../services/utility_provider.dart';
 import '../widgets/profile_dialog.dart';
-
-/// 缓存新鲜期：该时间内直接使用缓存，不发起网络请求。
-const Duration _kFreshWindow = Duration(minutes: 10);
-
-/// 缓存有效期：超过后视为过期，进入页面全屏重新加载。
-const Duration _kCacheLifetime = Duration(hours: 12);
 
 /// 电费低余额阈值（度），参考完美校园轮询插件默认值。
 const double _kLowElectricity = 10.0;
@@ -95,26 +89,21 @@ class _UtilityPageState extends State<UtilityPage> {
     }
     _studentId = profile.studentId;
 
-    final cache = await UtilityCacheRepository.load();
+    // 与看板页共用同一套缓存/刷新策略。
+    final snap = await UtilityDataProvider.load(_studentId);
     if (!mounted) return;
 
-    // 缓存属于其他学号时视为无缓存。
-    if (cache == null || cache.studentId != _studentId || cache.rooms.isEmpty) {
-      _refresh(showFullLoading: true);
-      return;
-    }
-
-    if (cache.age < _kCacheLifetime) {
+    if (snap.rooms != null) {
       setState(() {
-        _rooms = cache.rooms;
-        _fetchedAt = cache.fetchedAt;
+        _rooms = snap.rooms;
+        _fetchedAt = snap.fetchedAt;
         _phase = _Phase.content;
       });
-      // 新鲜期内直接用缓存；超出新鲜期但未过期则后台刷新。
-      if (cache.age >= _kFreshWindow) _refresh(showFullLoading: false);
+      // 超出新鲜期但未过期则后台刷新。
+      if (snap.shouldRefresh) _refresh(showFullLoading: false);
       return;
     }
-    // 超过 12 小时：与首次进入一样全屏加载。
+    // 无缓存或超过 12 小时：与首次进入一样全屏加载。
     _refresh(showFullLoading: true);
   }
 
@@ -130,28 +119,27 @@ class _UtilityPageState extends State<UtilityPage> {
         _refreshing = true;
       }
     });
-    try {
-      final rooms = await UtilityService.fetchRooms(_studentId);
-      await UtilityCacheRepository.save(_studentId, rooms);
-      if (!mounted) return;
+    final snap = await UtilityDataProvider.refresh(_studentId);
+    if (!mounted) return;
+    if (snap.rooms != null) {
       setState(() {
-        _rooms = rooms;
-        _fetchedAt = DateTime.now();
+        _rooms = snap.rooms;
+        _fetchedAt = snap.fetchedAt;
         _refreshing = false;
         _phase = _Phase.content;
       });
-    } catch (e) {
-      if (!mounted) return;
-      if (showFullLoading) {
-        setState(() {
-          _refreshing = false;
-          _phase = _Phase.error;
-          _message = e is UtilityException ? e.message : '获取失败，请稍后重试';
-        });
-      } else {
-        setState(() => _refreshing = false);
-        _showFailureBanner(e is UtilityException ? e.message : '网络异常');
-      }
+      return;
+    }
+    final message = snap.error ?? '获取失败，请稍后重试';
+    if (showFullLoading) {
+      setState(() {
+        _refreshing = false;
+        _phase = _Phase.error;
+        _message = message;
+      });
+    } else {
+      setState(() => _refreshing = false);
+      _showFailureBanner(message);
     }
   }
 
