@@ -4,7 +4,8 @@
 // 步骤：切字 + 与标注配对 → 构建模板（多质心）→ 整串触发率/精度扫描
 // → 导出资产。日后想扩充预置集时重跑本脚本即可。
 //
-// 运行：flutter run tool/... 不适用，直接 `dart run`（需先 flutter pub get）。
+// 运行：不能 `dart run`（依赖 dart:ui）。建一个临时测试文件调用
+// buildAndExport()，跑 `flutter test` 执行，跑完删掉临时测试。
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -16,9 +17,13 @@ const _labelPath = 'C:/Users/BrianLiu/AppData/Local/Temp/zsy_labels.json';
 const _imgDir = 'C:/Users/BrianLiu/AppData/Local/Temp/zsy_yzm2';
 const _labelPath2 = 'C:/Users/BrianLiu/AppData/Local/Temp/zsy_labels2.json';
 const _imgDir2 = 'C:/Users/BrianLiu/AppData/Local/Temp/zsy_bulk';
+const _labelPath3 = 'C:/Users/BrianLiu/AppData/Local/Temp/zsy_labels4.json';
+const _imgDir3 = 'C:/Users/BrianLiu/AppData/Local/Temp/zsy_bulk4';
 const _outPath = 'assets/captcha_templates.json';
 
-void main() {
+void main() => buildAndExport();
+
+void buildAndExport() {
   // ---- 0. 汇总两批标注 ----
   final jobs = <String, ({String text, String dir})>{};
   final l1 =
@@ -30,6 +35,11 @@ void main() {
   }
   for (final e in l2.entries) {
     jobs[e.key] = (text: (e.value as String).trim(), dir: _imgDir2);
+  }
+  final l3 = jsonDecode(File(_labelPath3).readAsStringSync())
+      as Map<String, dynamic>;
+  for (final e in l3.entries) {
+    jobs[e.key] = (text: (e.value as String).trim(), dir: _imgDir3);
   }
   // ignore: avoid_print
   print('标注总数 ${jobs.length}');

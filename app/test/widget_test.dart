@@ -98,22 +98,14 @@ void main() {
     expect(find.text('个人资料'), findsOneWidget);
   });
 
-  testWidgets('「我的」里能进入验证码训练', (WidgetTester tester) async {
+  testWidgets('「我的」不再有验证码训练入口', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
 
-    final entry = find.text('验证码训练');
-    await tester.dragUntilVisible(
-      entry,
-      find.byType(ListView),
-      const Offset(0, -80),
-    );
-    await tester.pumpAndSettle();
-    expect(entry, findsOneWidget);
-    // 还没训练过：副标题应说明需要手动输入
-    expect(find.textContaining('未训练'), findsOneWidget);
+    expect(find.text('验证码训练'), findsNothing);
+    expect(find.text('验证码识别'), findsNothing);
   });
 
   testWidgets('功能页可以进入通知转写', (WidgetTester tester) async {
@@ -305,6 +297,15 @@ void main() {
     await tester.tap(find.text('回到今天'));
     await tester.pumpAndSettle();
     expect(find.textContaining('今天 · '), findsOneWidget);
+
+    // 头部有前后两个箭头：点「后一天」也能切到明天
+    await tester.tap(find.byTooltip('后一天'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('今天 · '), findsNothing);
+    expect(find.text('回到今天'), findsOneWidget);
+
+    // 刷新按钮就在日历旁，未在刷新中时可点击
+    expect(find.byTooltip('刷新'), findsOneWidget);
   });
 
   testWidgets('看板页无课表时引导去导入', (WidgetTester tester) async {
