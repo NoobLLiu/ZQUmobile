@@ -219,7 +219,7 @@ class _FeatureRow extends StatelessWidget {
                   Text(
                     feature.subtitle,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.outline,
+                      color: scheme.onSurfaceVariant,
                       height: 1.3,
                     ),
                   ),
@@ -227,7 +227,7 @@ class _FeatureRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 4),
-            Icon(Icons.chevron_right, size: 20, color: scheme.outlineVariant),
+            Icon(Icons.chevron_right, size: 20, color: scheme.outline),
           ],
         ),
       ),
