@@ -9,8 +9,10 @@ library;
 import 'package:flutter/material.dart';
 
 import '../core/grid_style.dart';
+import '../models/attachment_schedule.dart';
 import '../models/timetable.dart';
 import '../models/utility.dart';
+import '../services/attachment_schedule_repository.dart';
 import '../services/profile_repository.dart';
 import '../services/timetable_repository.dart';
 import '../services/utility_provider.dart';
@@ -43,6 +45,9 @@ class DashboardPage extends StatefulWidget {
 class DashboardPageState extends State<DashboardPage> {
   Timetable? _timetable;
 
+  /// 附属日程（晚自习 / 阳光体育），按星期合并进 Today 列表。
+  List<AttachmentSchedule> _extras = const [];
+
   /// 水电数据；为空表示暂无可展示的余额。
   List<UtilityRoom> _rooms = const [];
 
@@ -71,6 +76,7 @@ class DashboardPageState extends State<DashboardPage> {
 
   Future<void> _load() async {
     final tt = await TimetableRepository.load();
+    final extras = await AttachmentScheduleRepository.load();
     // 开学日期解析失败的课表视同没有课表。
     Timetable? usable =
         (tt != null && DateTime.tryParse(tt.semesterStartDate) != null)
@@ -99,6 +105,7 @@ class DashboardPageState extends State<DashboardPage> {
     if (!mounted) return;
     setState(() {
       _timetable = usable;
+      _extras = extras;
       _rooms = rooms;
       _roomName = roomName;
       _utilWarn = warn;
@@ -333,11 +340,25 @@ class DashboardPageState extends State<DashboardPage> {
 
     final week = tt.weekOf(_selected);
     if (week == null) {
-      return _emptyState(
-        context,
-        icon: Icons.beach_access_outlined,
-        title: '该日期不在本学期内',
-        sub: '选一个学期内的日子看看吧',
+      // 学期外没有课程周次，但附属日程仍按星期合并展示。
+      final extras = _extras
+          .where((s) => s.enabled && s.occursOn(_selected.weekday))
+          .toList();
+      if (extras.isEmpty) {
+        return _emptyState(
+          context,
+          icon: Icons.beach_access_outlined,
+          title: '该日期不在本学期内',
+          sub: '选一个学期内的日子看看吧',
+        );
+      }
+      return ListView.separated(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        itemCount: extras.length + 1,
+        separatorBuilder: (_, _) => const SizedBox(height: 8),
+        itemBuilder: (context, i) => i == 0
+            ? _buildExtrasHeader(context)
+            : _buildExtraRow(context, extras[i - 1]),
       );
     }
 
@@ -348,7 +369,12 @@ class DashboardPageState extends State<DashboardPage> {
             .toList()
           ..sort((a, b) => a.startSection.compareTo(b.startSection));
 
-    if (courses.isEmpty) {
+    // 附属日程按星期合并，不受教学周限制。
+    final extras = _extras
+        .where((s) => s.enabled && s.occursOn(_selected.weekday))
+        .toList();
+
+    if (courses.isEmpty && extras.isEmpty) {
       return _emptyState(
         context,
         icon: Icons.nights_stay_outlined,
@@ -357,12 +383,161 @@ class DashboardPageState extends State<DashboardPage> {
       );
     }
 
+    final rows = <Widget>[
+      for (final c in courses) _buildCourseRow(context, c, slotMap),
+      if (extras.isNotEmpty) ...[
+        _buildExtrasHeader(context),
+        for (final e in extras) _buildExtraRow(context, e),
+      ],
+    ];
+
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      itemCount: courses.length,
+      itemCount: rows.length,
       separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, i) =>
-          _buildCourseRow(context, courses[i], slotMap),
+      itemBuilder: (context, i) => rows[i],
+    );
+  }
+
+  /// 附属日程区块的小标题。
+  Widget _buildExtrasHeader(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, top: 4),
+      child: Row(
+        children: [
+          Icon(Icons.event_available_outlined,
+              size: 13, color: scheme.primary),
+          const SizedBox(width: 4),
+          Text(
+            '附属日程',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: scheme.primary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 附属日程行（配色与课程条区分，用主题色淡底）。
+  Widget _buildExtraRow(BuildContext context, AttachmentSchedule schedule) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final base = schedule.type == AttachmentScheduleType.eveningStudy
+        ? const Color(0xFF5C6BC0)
+        : const Color(0xFFEF8C3F);
+    final bg = base.withValues(alpha: isDark ? 0.28 : 0.13);
+    final fg = scheme.onSurface;
+    final fgSub = scheme.onSurfaceVariant;
+
+    final ongoing =
+        _isToday && _inProgress(schedule.start, schedule.end);
+    final sub = [
+      schedule.weekdayLabel,
+      if (schedule.location.isNotEmpty) schedule.location,
+      if (schedule.note.isNotEmpty) schedule.note,
+    ].join(' · ');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          children: [
+            SizedBox(
+              width: 48,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    schedule.start,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: fg,
+                    ),
+                  ),
+                  Text(
+                    schedule.end,
+                    style: TextStyle(fontSize: 11, color: fgSub),
+                  ),
+                ],
+              ),
+            ),
+            Container(width: 1, color: fgSub.withValues(alpha: 0.4)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        schedule.type == AttachmentScheduleType.eveningStudy
+                            ? Icons.nights_stay_outlined
+                            : Icons.wb_sunny_outlined,
+                        size: 15,
+                        color: base,
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          schedule.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: fg,
+                          ),
+                        ),
+                      ),
+                      if (ongoing) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? const Color(0x33FFFFFF)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '进行中',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: isDark ? fg : const Color(0xFFA32D2D),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (sub.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      sub,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: fgSub),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

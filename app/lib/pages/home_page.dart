@@ -53,6 +53,12 @@ class HomePage extends StatelessWidget {
           icon: Icons.school_outlined,
           route: '/jwgl',
         ),
+        HomeFeature(
+          title: '附属日程',
+          subtitle: '管理晚自习和阳光体育时间，合并首页看板',
+          icon: Icons.event_available_outlined,
+          route: '/attachment',
+        ),
       ],
     ),
     HomeSection(

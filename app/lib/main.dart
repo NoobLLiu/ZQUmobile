@@ -6,6 +6,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'pages/attachment_schedule_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/express_station_page.dart';
 import 'pages/home_page.dart';
@@ -39,6 +40,7 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
         '/utility': (ctx) => const UtilityPage(),
         '/notice': (ctx) => const NoticeRewritePage(),
         '/express': (ctx) => const ExpressStationPage(),
+        '/attachment': (ctx) => const AttachmentSchedulePage(),
       },
     );
   }
