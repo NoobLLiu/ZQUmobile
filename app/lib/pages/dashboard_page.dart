@@ -252,13 +252,33 @@ class DashboardPageState extends State<DashboardPage> {
                   Expanded(
                     child: Text(
                       _titleText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right),
+                    tooltip: '后一天',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _shiftDay(1),
+                  ),
                   _buildWeekChip(context),
+                  IconButton(
+                    tooltip: '刷新',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _utilLoading ? null : _load,
+                    icon: _utilLoading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
+                  ),
                   IconButton(
                     icon: const Icon(Icons.calendar_month_outlined),
                     tooltip: '选择日期',
