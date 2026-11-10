@@ -18,12 +18,12 @@ RELEASE_PAGE="https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/tag/${TAG}
 UPSTREAM="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
 
 api() { curl -sS --show-error --fail-with-body --max-time 180 "$@"; }
-# 境外 runner 往 Gitee 传大 multipart 时会自动带 Expect: 100-continue，
-# 跨境链路常在这里卡死；显式去掉并固定 HTTP/1.1。
+# 境外 runner 直传大 Content-Length 的 multipart 会被跨境链路卡死（约 14KB/s
+# 且服务端零响应）。从 stdin 读文件可让 curl 改用 Transfer-Encoding: chunked，
+# 不带 Content-Length，避开按包体大小拦截的规则。
 upload() {
   curl -sS --show-error --fail-with-body --max-time 300 \
     --http1.1 -H 'Expect:' \
-    --retry 1 --retry-delay 5 \
     -o /dev/null -w '  用时 %{time_total}s，平均 %{speed_upload} B/s\n' "$@"
 }
 log() { echo ":: $*"; }
@@ -123,7 +123,7 @@ RID=$(echo "$CREATED" | python3 -c "import sys,json; print(json.load(sys.stdin)[
 for name in version.json "${APKS[@]}"; do
   log "上传 ${name}"
   upload -X POST "$API/releases/${RID}/attach_files?access_token=${GITEE_TOKEN}" \
-    -F "file=@${WORK_DIR}/${name}"
+    -F "file=@-;filename=${name}" < "${WORK_DIR}/${name}"
 done
 
 # 校验：Gitee 会自动追加 latest.zip / latest.tar.gz，只核对我们要的 4 个。
