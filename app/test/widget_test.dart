@@ -232,7 +232,9 @@ void main() {
     await tester.dragUntilVisible(
       greeting,
       find.byType(ListView),
-      const Offset(0, -200),
+      // 步长要小：大步 drag 的惯性滚动会在 pumpAndSettle 时把目标滚出
+      // ListView 的懒构建范围，断言偶发「Found 0 widgets」（加入口条后更明显）
+      const Offset(0, -50),
     );
     await tester.pumpAndSettle();
     expect(greeting, findsOneWidget);
