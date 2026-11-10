@@ -1,0 +1,40 @@
+name: Sync Release to Gitee
+
+on:
+  # 主链路：CI 在 main 上构建并刷新 GitHub latest 之后自动同步。
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  # 手动补跑用（首次验证、Gitee 令牌续期后重试），不是定时自动策略。
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitee-release-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: 同步 Release 到 Gitee
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 同步产物与版本信息
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: NoobLLiu
+          GITEE_REPO: ZQUmobile
+          GITEE_TARGET_COMMITISH: master
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/sync_gitee_release.sh

@@ -182,19 +182,72 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
+          BUILD="${{ steps.ver.outputs.build }}"
           DIR="build/app/outputs/flutter-apk"
+          META="$DIR/version.json"
           APKS=("$DIR/zhangshangyanyuan-$VERSION-arm64-v8a.apk" \
                 "$DIR/zhangshangyanyuan-$VERSION-armeabi-v7a.apk" \
                 "$DIR/zhangshangyanyuan-$VERSION-x86_64.apk")
+
+          # 机器可读的版本清单：以后 App 内检测更新只需 GET 这一个文件。
+          # 版本号 / build 号 / 提交号 / 构建时间只有 CI 拿得全，必须在这里生成；
+          # Gitee 同步脚本只负责把里面的下载直链改写成 Gitee 地址。
+          ZSY_VERSION="$VERSION" ZSY_BUILD="$BUILD" \
+          ZSY_REPO="${{ github.repository }}" ZSY_SHA="${{ github.sha }}" \
+          ZSY_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%MZ)" \
+          python - "$META" "${APKS[@]}" <<'PY'
+          import hashlib, json, os, sys
+
+          meta, files = sys.argv[1], sys.argv[2:]
+          abis = ["arm64-v8a", "armeabi-v7a", "x86_64"]
+          repo = os.environ["ZSY_REPO"]
+          assets = []
+          for path in files:
+              name = os.path.basename(path)
+              abi = next((a for a in abis if name.endswith("-%s.apk" % a)), "unknown")
+              h, size = hashlib.sha256(), 0
+              with open(path, "rb") as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(chunk)
+                      size += len(chunk)
+              assets.append({
+                  "abi": abi,
+                  "name": name,
+                  "size": size,
+                  "sha256": h.hexdigest(),
+                  "url": "https://github.com/%s/releases/download/latest/%s" % (repo, name),
+              })
+          data = {
+              "schemaVersion": 1,
+              "package": "com.nooblliu.zhangshang_yanyuan",
+              "version": os.environ["ZSY_VERSION"],
+              "versionCode": int(os.environ["ZSY_BUILD"]),
+              "buildNumber": int(os.environ["ZSY_BUILD"]),
+              "fullVersion": os.environ["ZSY_VERSION"] + "+" + os.environ["ZSY_BUILD"],
+              "tag": "latest",
+              "gitSha": os.environ["ZSY_SHA"],
+              "buildTime": os.environ["ZSY_BUILD_TIME"],
+              "releaseNotes": "由 CI 自动构建，每次提交更新。",
+              "assets": assets,
+          }
+          with open(meta, "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+              f.write("\n")
+          print("version.json: %s (%s)" % (data["fullVersion"], data["buildTime"]))
+          PY
+
           if ! gh release view latest > /dev/null 2>&1; then
             gh release create latest \
-              --title "最新构建" \
-              --notes "由 CI 自动构建，每次提交更新。" \
+              --title "掌上砚园 $VERSION ($BUILD)" \
+              --notes "由 CI 自动构建，每次提交更新。版本清单见 version.json。" \
               --prerelease
           fi
-          gh release upload latest "${APKS[@]}" --clobber
+          gh release edit latest \
+            --title "掌上砚园 $VERSION ($BUILD)" \
+            --notes "由 CI 自动构建，每次提交更新。版本清单见 version.json。"
+          gh release upload latest "${APKS[@]}" "$META" --clobber
 
-          KEEP="zhangshangyanyuan-$VERSION-arm64-v8a.apk zhangshangyanyuan-$VERSION-armeabi-v7a.apk zhangshangyanyuan-$VERSION-x86_64.apk"
+          KEEP="zhangshangyanyuan-$VERSION-arm64-v8a.apk zhangshangyanyuan-$VERSION-armeabi-v7a.apk zhangshangyanyuan-$VERSION-x86_64.apk version.json"
           for name in $(gh release view latest --json assets --jq '.assets[].name'); do
             case " $KEEP " in *" $name "*) continue ;; esac
             if [[ "$name" == zhangshangyanyuan-*.apk ]]; then
