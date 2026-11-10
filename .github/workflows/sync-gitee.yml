@@ -24,12 +24,20 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
+    env:
+      GITEE_HTTPS_PROXY: ${{ secrets.GITEE_HTTPS_PROXY }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
+      - name: 未配置国内出口代理时跳过
+        if: env.GITEE_HTTPS_PROXY == ''
+        run: |
+          echo "::warning::未配置 GITEE_HTTPS_PROXY：境外 runner 直传 15–20MB 的 APK 到 Gitee 会被链路卡住。请在仓库 Secrets 配置国内出口代理，或在本地运行 scripts/sync_gitee_release.sh 补传。"
+
       - name: 同步产物与版本信息
+        if: env.GITEE_HTTPS_PROXY != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
