@@ -27,3 +27,7 @@ coverage/
 
 # 早期 Android 模板遗留（与「掌上肇院」Flutter 工程无关）
 helloworld/
+
+# 一键同步 Gitee 的本地凭据与下载缓存（不入库）
+tool/gitee_sync/_local_config.json
+tool/gitee_sync/cache/
