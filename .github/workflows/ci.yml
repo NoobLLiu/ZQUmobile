@@ -61,6 +61,31 @@ jobs:
       - name: Pub get
         run: flutter pub get
 
+      # 固定 release 签名：以前 release 走 debug 签名，而 windows runner 每次都是全新环境、
+      # debug.keystore 现生成，于是每个版本签名都不同 → 手机上覆盖安装必报「签名不一致」。
+      # 这里从 Secrets 还原固定的密钥库，保证所有版本用同一把密钥签名。
+      - name: Setup release keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::缺少 Secrets.ANDROID_KEYSTORE_BASE64，无法使用固定签名"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.jks
+          cat > android/key.properties <<EOF
+          storeFile=app/release.jks
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          keytool -list -keystore android/app/release.jks -storepass "$STORE_PASSWORD" | tail -3
+          echo "密钥库就绪：$(ls -l android/app/release.jks)"
+
       - name: Analyze
         run: flutter analyze --no-fatal-infos
 
@@ -90,6 +115,35 @@ jobs:
                "zhangshangyanyuan-${{ steps.ver.outputs.version }}-$abi.apk"
           done
           ls -lh
+
+      # 自检：确认产物确实是用固定 release 密钥签的（指纹写死在这里，
+      # 换成别的密钥或退回 debug 签名都会在这里直接失败，不会把坏包发出去）。
+      - name: Verify APK signing certificate
+        shell: bash
+        run: |
+          APK="build/app/outputs/flutter-apk/zhangshangyanyuan-${{ steps.ver.outputs.version }}-arm64-v8a.apk"
+          EXPECTED="b99c6a83926b37950f58bfe2e42e8e94dd32e561e11115c554d18db9011ce4cc"
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          SDK="${SDK//\\//}"
+          SIGNER=$(find "$SDK/build-tools" -maxdepth 2 -name 'apksigner.bat' 2>/dev/null | sort -V | tail -1)
+          if [ -n "$SIGNER" ]; then
+            echo "使用 apksigner: $SIGNER"
+            OUT=$("$SIGNER" verify --print-certs "$APK")
+            echo "$OUT"
+            ACTUAL=$(echo "$OUT" | grep -m1 -oE 'SHA-256 digest: [0-9a-fA-F]+' | sed 's/.*: //' | tr 'A-F' 'a-f')
+          else
+            echo "未找到 apksigner，退回 keytool"
+            OUT=$(keytool -printcert -jarfile "$APK")
+            echo "$OUT"
+            ACTUAL=$(echo "$OUT" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-F' 'a-f')
+          fi
+          echo "实际证书指纹: $ACTUAL"
+          echo "预期证书指纹: $EXPECTED"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::APK 签名与固定密钥不符，覆盖安装仍会失败"
+            exit 1
+          fi
+          echo "✅ 签名指纹一致，可覆盖安装"
 
       # 每个 APK 单独上传且不打包（archive: false），Actions 页面直接显示 3 个
       # 可单独点击下载的 .apk，而不是一个 zip。

@@ -1,0 +1,13 @@
+# 发布签名配置模板（真实文件为 android/key.properties，已被 .gitignore 排除，不要提交）
+#
+# 用途：release 包用同一把固定密钥签名，否则每个版本签名不同、手机无法覆盖安装。
+# 密钥库文件：android/app/release.jks（同样被 .gitignore 排除）
+# CI 上由 Secrets 还原：ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD /
+#                       ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
+#
+# storeFile 相对于 android/ 目录解析。
+
+storeFile=app/release.jks
+storePassword=改成你的密钥库口令
+keyAlias=zqu
+keyPassword=改成你的密钥口令

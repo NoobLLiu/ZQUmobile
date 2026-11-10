@@ -21,9 +21,7 @@ import '../services/ai_source_repository.dart';
 import '../services/deepseek_client.dart';
 import '../services/notice_rewrite_prompt.dart';
 import '../widgets/notice_guide_dialog.dart';
-
-/// 模型来源配置页的路由名（见 main.dart）。
-const String kAiSourceRoute = '/ai-source';
+import 'ai_source_page.dart';
 
 /// 通知转写页。
 class NoticeRewritePage extends StatefulWidget {
@@ -82,9 +80,14 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
     setState(() => _sourceConfig = config);
   }
 
-  /// 打开配置页，保存后重新读取。
+  /// 打开配置页（二级页），保存后重新读取。
+  ///
+  /// 用显式 MaterialPageRoute 而不是命名路由：命名路由在真机上出现过
+  /// 点击无反应的案例，显式路由少一层注册依赖。
   Future<void> _openSourceConfig() async {
-    final saved = await Navigator.of(context).pushNamed<bool>(kAiSourceRoute);
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(builder: (_) => const AiSourcePage()),
+    );
     if (saved == true) await _loadSourceConfig();
   }
 
@@ -292,11 +295,6 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
         title: const Text('通知转写'),
         actions: [
           IconButton(
-            tooltip: '配置模型来源',
-            onPressed: _generating ? null : _openSourceConfig,
-            icon: const Icon(Icons.tune_outlined),
-          ),
-          IconButton(
             tooltip: '使用示例',
             onPressed: _generating
                 ? null
@@ -327,6 +325,8 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
           _buildHero(theme),
+          const SizedBox(height: 12),
+          _buildSourceEntry(theme),
           const SizedBox(height: 12),
           _buildOriginalCard(theme),
           const SizedBox(height: 12),
@@ -494,54 +494,63 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
   int get _freeModelIndex =>
       _sourceConfig.freeModelIndex.clamp(0, kAiModels.length - 1);
 
-  /// 选项页里的来源条：显示当前用的是哪套模型，点「配置」进去换。
-  Widget _buildSourceBanner(ThemeData theme) {
+  /// 「AI 模型来源」入口条：放在「原通知」上方，整行可点，进入二级配置页。
+  Widget _buildSourceEntry(ThemeData theme) {
     final scheme = theme.colorScheme;
     final free = _sourceConfig.isFree;
-    final title =
-        free ? '免费模型（作者提供）' : '自行配置 · ${_sourceConfig.providerName}';
     final detail = free
-        ? _sourceConfig.effectiveModel
-        : '${_sourceConfig.effectiveModel} · ${_sourceConfig.baseUrl.trim()}';
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-      decoration: BoxDecoration(
-        color: scheme.primaryContainer.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            free ? Icons.card_giftcard_outlined : Icons.tune_outlined,
-            size: 20,
-            color: scheme.primary,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
+        ? '免费模型（作者提供） · ${_sourceConfig.effectiveModel}'
+        : '自行配置 · ${_sourceConfig.providerName} · ${_sourceConfig.effectiveModel}';
+    return Card(
+      color: scheme.surfaceContainerLow,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _generating ? null : _openSourceConfig,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  detail.trim().isEmpty ? '未配置' : detail,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: scheme.onSurfaceVariant),
+                child: Icon(
+                  free ? Icons.card_giftcard_outlined : Icons.tune_outlined,
+                  size: 22,
+                  color: scheme.primary,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AI 模型来源',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      detail,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 20, color: scheme.outline),
+            ],
           ),
-          TextButton(
-            onPressed: _generating ? null : _openSourceConfig,
-            child: const Text('配置'),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -630,8 +639,7 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
             ),
           ],
 
-          _FieldLabel('AI 模型来源'),
-          _buildSourceBanner(theme),
+          _FieldLabel('AI 模型'),
           if (_sourceConfig.isFree) ...[
             const SizedBox(height: 4),
             _ChipRow<int>(
@@ -670,7 +678,8 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
                 ],
               ),
             ),
-          ],
+          ] else
+            _Hint('当前模型：${_sourceConfig.effectiveModel}（在上方「AI 模型来源」里配置）。'),
         ],
       ),
     );

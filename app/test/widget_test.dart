@@ -7,8 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zhangshang_yanyuan/main.dart';
+import 'package:zhangshang_yanyuan/models/ai_source.dart';
 import 'package:zhangshang_yanyuan/models/timetable.dart';
 import 'package:zhangshang_yanyuan/pages/notice_rewrite_page.dart';
+import 'package:zhangshang_yanyuan/services/ai_source_repository.dart';
 import 'package:zhangshang_yanyuan/services/timetable_repository.dart';
 import 'package:zhangshang_yanyuan/services/utility_provider.dart';
 import 'package:zhangshang_yanyuan/services/utility_service.dart';
@@ -145,6 +147,35 @@ void main() {
     expect(find.text('请先粘贴原通知'), findsOneWidget);
   });
 
+  testWidgets('AI 模型来源条目能进入配置页并可返回', (WidgetTester tester) async {
+    // 自定义来源但没填 Key：配置页的自动查询不会发起真实请求
+    SharedPreferences.setMockInitialValues({
+      'zsy_profile': _completeProfile,
+      'zsy_notice_guide_seen': true,
+      'zsy_utility_cache': _utilityCache(),
+      AiSourceRepository.prefsKey: const AiSourceConfig(
+        mode: AiSourceMode.custom,
+        providerId: 'deepseek',
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: '',
+        model: '',
+      ).encode(),
+    });
+    await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
+    await tester.pumpAndSettle();
+
+    // 入口条在「原通知」上方，整行可点
+    expect(find.text('AI 模型来源'), findsOneWidget);
+    await tester.tap(find.text('AI 模型来源'));
+    await tester.pumpAndSettle();
+    expect(find.text('配置模型来源'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('配置模型来源'), findsNothing);
+    expect(find.text('AI 模型来源'), findsOneWidget);
+  });
+
   testWidgets('通知转写给出演示期用 Key 的说明', (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
 
@@ -195,7 +226,16 @@ void main() {
 
     // 原通知、来源、问好对象都被填好，用户可以直接点开始转写
     expect(find.textContaining('挑战杯'), findsWidgets);
-    expect(find.textContaining('整句问候：法学5班的同学们下午好'), findsOneWidget);
+    // 问候预览在「选项」卡片里，首屏之外，先滚下去（ListView 懒构建，
+    // 不滚动的话这个 Text 根本不在树里）
+    final greeting = find.textContaining('整句问候：法学5班的同学们下午好');
+    await tester.dragUntilVisible(
+      greeting,
+      find.byType(ListView),
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+    expect(greeting, findsOneWidget);
   });
 
   testWidgets('个人信息不完整时会弹出填写引导', (WidgetTester tester) async {

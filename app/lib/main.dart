@@ -8,7 +8,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'pages/ai_source_page.dart';
 import 'pages/attachment_schedule_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/express_station_page.dart';
@@ -53,7 +52,6 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
         '/notice': (ctx) => const NoticeRewritePage(),
         '/express': (ctx) => const ExpressStationPage(),
         '/attachment': (ctx) => const AttachmentSchedulePage(),
-        kAiSourceRoute: (ctx) => const AiSourcePage(),
       },
     );
   }
