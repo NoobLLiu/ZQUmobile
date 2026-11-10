@@ -4,7 +4,6 @@
 set -euo pipefail
 
 : "${GITEE_TOKEN:?缺少 GITEE_TOKEN}"
-: "${GH_TOKEN:?缺少 GH_TOKEN}"
 
 GITEE_OWNER="${GITEE_OWNER:-NoobLLiu}"
 GITEE_REPO="${GITEE_REPO:-ZQUmobile}"
@@ -17,21 +16,29 @@ BASE_URL="https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${TAG
 RELEASE_PAGE="https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/tag/${TAG}"
 UPSTREAM="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
 
-api() { curl -sS --show-error --fail-with-body --max-time 180 "$@"; }
-# 境外 runner 直传大 Content-Length 的 multipart 会被跨境链路卡死（约 14KB/s
-# 且服务端零响应）。从 stdin 读文件可让 curl 改用 Transfer-Encoding: chunked，
-# 不带 Content-Length，避开按包体大小拦截的规则。
+# 可选：配一个国内出口的 HTTP 代理，境外 runner 才能把大 APK 传上 Gitee。
+# GitHub 托管 runner 直连实测只有 ~14KB/s 且服务端零响应，国内网络 19MB 约 8 秒。
+CURL_EXTRA=()
+[ -n "${GITEE_HTTPS_PROXY:-}" ] && CURL_EXTRA+=(--proxy "$GITEE_HTTPS_PROXY")
+
+api() { curl -sS --show-error --fail-with-body --max-time 180 "${CURL_EXTRA[@]}" "$@"; }
 upload() {
-  curl -sS --show-error --fail-with-body --max-time 300 \
-    --http1.1 -H 'Expect:' \
+  curl -sS --show-error --fail-with-body --max-time 600 "${CURL_EXTRA[@]}" \
     -o /dev/null -w '  用时 %{time_total}s，平均 %{speed_upload} B/s\n' "$@"
 }
 log() { echo ":: $*"; }
 
 mkdir -p "$WORK_DIR"
-
-log "拉取 GitHub ${GITHUB_REPOSITORY} 的 ${TAG} 产物"
-gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$WORK_DIR" --clobber
+if [ "${SKIP_DOWNLOAD:-0}" = "1" ]; then
+  # 国内网络从 GitHub 拉 50MB 可能要十几分钟；断线后可复用缓存重跑上传。
+  log "复用本地缓存 ${WORK_DIR}（不重新下载）"
+else
+  # 中转文件跑完即删，不在本机留下 APK。
+  trap 'rm -rf "$WORK_DIR"' EXIT
+  : "${GH_TOKEN:?缺少 GH_TOKEN}"
+  log "拉取 GitHub ${GITHUB_REPOSITORY} 的 ${TAG} 产物"
+  gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$WORK_DIR" --clobber
+fi
 
 META="$WORK_DIR/version.json"
 [ -f "$META" ] || { echo "::error::GitHub ${TAG} 里没有 version.json，请先跑一次 CI 构建"; exit 1; }
@@ -45,17 +52,19 @@ with open(meta, encoding="utf-8") as f:
     d = json.load(f)
 
 for a in d.get("assets", []):
-    a["upstreamUrl"] = a["url"]
+    if "upstreamUrl" not in a:
+        a["upstreamUrl"] = a["url"]
     a["url"] = base + "/" + a["name"]
 d["mirror"] = "gitee"
 d["releasePage"] = page
 d["upstream"] = upstream
 d["versionJsonUrl"] = base + "/version.json"
 
-with open(meta, "w", encoding="utf-8") as f:
+with open(meta, "w", encoding="utf-8", newline="\n") as f:
     json.dump(d, f, ensure_ascii=False, indent=2)
     f.write("\n")
-with open(os.path.join(os.path.dirname(meta), "apks.txt"), "w", encoding="utf-8") as f:
+with open(os.path.join(os.path.dirname(meta), "apks.txt"), "w",
+          encoding="utf-8", newline="\n") as f:
     for a in d.get("assets", []):
         if a["name"].endswith(".apk"):
             f.write(a["name"] + "\n")
@@ -73,6 +82,7 @@ PY
 )"
 
 mapfile -t APKS < "$WORK_DIR/apks.txt"
+APKS=("${APKS[@]%$'\r'}")
 [ "${#APKS[@]}" -eq 3 ] || { echo "::error::version.json 里应有 3 个 APK，实际 ${#APKS[@]} 个"; exit 1; }
 for name in "${APKS[@]}"; do
   [ -f "$WORK_DIR/$name" ] || { echo "::error::缺少产物 $name"; exit 1; }
@@ -119,11 +129,11 @@ CREATED=$(api -X POST "$API/releases" \
 RID=$(echo "$CREATED" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 [ -n "$RID" ] || { echo "::error::创建 Gitee Release 失败：$CREATED"; exit 1; }
 
-# 先传小的 version.json：既让自动更新数据源先就位，也能作为小文件连通性探针。
+# 先传小的 version.json：自动更新数据源先就位，也能当小文件连通性探针。
 for name in version.json "${APKS[@]}"; do
   log "上传 ${name}"
   upload -X POST "$API/releases/${RID}/attach_files?access_token=${GITEE_TOKEN}" \
-    -F "file=@-;filename=${name}" < "${WORK_DIR}/${name}"
+    -F "file=@${WORK_DIR}/${name}"
 done
 
 # 校验：Gitee 会自动追加 latest.zip / latest.tar.gz，只核对我们要的 4 个。
