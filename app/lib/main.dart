@@ -1,6 +1,6 @@
 /// 掌上砚园 —— 肇庆学院校园助手。
 ///
-/// 主框架：底部导航「看板」「功能页」「我的」，
+/// 主框架：底部导航「看板」「功能页」「设置」，
 /// 看板为默认首页，汇聚今日课程与生活数据。
 library;
 
@@ -13,13 +13,13 @@ import 'pages/dashboard_page.dart';
 import 'pages/express_station_page.dart';
 import 'pages/home_page.dart';
 import 'pages/jwgl_login_page.dart';
-import 'pages/mine_page.dart';
 import 'pages/notice_rewrite_page.dart';
+import 'pages/profile_page.dart';
+import 'pages/settings_page.dart';
 import 'pages/timetable_page.dart';
 import 'pages/utility_page.dart';
 import 'services/profile_repository.dart';
 import 'services/utility_reminder.dart';
-import 'widgets/profile_dialog.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -87,7 +87,7 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
   }
 }
 
-/// 底部导航外壳：看板 / 功能页 / 我的。
+/// 底部导航外壳：看板 / 功能页 / 设置。
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
@@ -99,8 +99,6 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   int _index = 0;
 
   final _dashKey = GlobalKey<DashboardPageState>();
-
-  final _mineKey = GlobalKey<MinePageState>();
 
   @override
   void initState() {
@@ -128,19 +126,16 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     }
   }
 
+  /// 首次启动或资料不完整时，进入整页的资料完善流程（不允许返回）。
   Future<void> _ensureProfile() async {
     final profile = await ProfileRepository.load();
     if (!mounted || profile.isComplete) return;
-
-    final filled = await showProfileDialog(
-      context,
-      initial: profile,
-      allowCancel: false,
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => ProfilePage(initial: profile, allowCancel: false),
+      ),
     );
-    if (filled == null) return;
-    await ProfileRepository.save(filled);
-    if (!mounted) return;
-    _mineKey.currentState?.reload();
   }
 
   @override
@@ -151,7 +146,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         children: [
           DashboardPage(key: _dashKey),
           const HomePage(),
-          MinePage(key: _mineKey),
+          const SettingsPage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -160,24 +155,22 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
           setState(() => _index = i);
           // 切到「看板」时刷新（导入课表、水电数据可能已变）
           if (i == 0) _dashKey.currentState?.reload();
-          // 切到「我的」时刷新（登录返回后课表、资料可能已变）
-          if (i == 2) _mineKey.currentState?.reload();
         },
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard),
+            icon: Icon(Icons.today_outlined),
+            selectedIcon: Icon(Icons.today),
             label: '看板',
           ),
           NavigationDestination(
-            icon: Icon(Icons.grid_view_outlined),
-            selectedIcon: Icon(Icons.grid_view),
+            icon: Icon(Icons.widgets_outlined),
+            selectedIcon: Icon(Icons.widgets),
             label: '功能页',
           ),
           NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: '我的',
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: '设置',
           ),
         ],
       ),

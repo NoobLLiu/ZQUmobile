@@ -10,6 +10,7 @@ import 'package:zhangshang_yanyuan/main.dart';
 import 'package:zhangshang_yanyuan/models/ai_source.dart';
 import 'package:zhangshang_yanyuan/models/timetable.dart';
 import 'package:zhangshang_yanyuan/pages/notice_rewrite_page.dart';
+import 'package:zhangshang_yanyuan/pages/utility_page.dart';
 import 'package:zhangshang_yanyuan/services/ai_source_repository.dart';
 import 'package:zhangshang_yanyuan/services/timetable_repository.dart';
 import 'package:zhangshang_yanyuan/services/utility_provider.dart';
@@ -51,11 +52,11 @@ void main() {
   testWidgets('应用能启动并显示底部导航', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
-    // 底部导航应有三个目的地：看板 / 功能页 / 我的
+    // 底部导航应有三个目的地：看板 / 功能页 / 设置
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.text('看板'), findsOneWidget);
     expect(find.text('功能页'), findsOneWidget);
-    expect(find.text('我的'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
   });
 
   testWidgets('功能页按分类展示功能入口', (WidgetTester tester) async {
@@ -90,20 +91,23 @@ void main() {
     expect(find.text('快递站状态'), findsOneWidget);
   });
 
-  testWidgets('切换到「我的」标签显示我的页面', (WidgetTester tester) async {
+  testWidgets('切换到「设置」标签显示设置页', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
 
+    expect(find.text('账号'), findsOneWidget);
+    expect(find.text('编辑个人信息'), findsOneWidget);
     expect(find.text('清空课表缓存'), findsOneWidget);
-    expect(find.text('个人资料'), findsOneWidget);
+    expect(find.text('水电余额提醒'), findsOneWidget);
+    expect(find.text('模型来源'), findsOneWidget);
   });
 
-  testWidgets('「我的」不再有验证码训练入口', (WidgetTester tester) async {
+  testWidgets('「设置」不再有验证码训练入口', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
 
     expect(find.text('验证码训练'), findsNothing);
@@ -240,18 +244,18 @@ void main() {
     expect(greeting, findsOneWidget);
   });
 
-  testWidgets('个人信息不完整时会弹出填写引导', (WidgetTester tester) async {
+  testWidgets('个人信息不完整时会进入完善资料的整页引导', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
 
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
     // 等首帧后的异步检查完成
     await tester.pumpAndSettle();
 
-    expect(find.text('个人信息'), findsOneWidget);
+    expect(find.text('完善个人信息'), findsOneWidget);
     expect(find.text('保存'), findsOneWidget);
   });
 
-  testWidgets('个人信息弹窗要求分别填写教务与 WebVPN 密码', (WidgetTester tester) async {
+  testWidgets('个人信息页要求分别填写教务与 WebVPN 密码', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
 
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
@@ -406,5 +410,64 @@ void main() {
     expect(find.text('8.2'), findsOneWidget);
     expect(find.text('未查到'), findsNothing);
     expect(find.byIcon(Icons.error_outline), findsOneWidget);
+  });
+
+  testWidgets('设置页进「水电余额提醒」有完美校园绑定提示', (WidgetTester tester) async {
+    await tester.pumpWidget(const ZhangShangZhaoYuanApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('水电余额提醒'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('余额不足时通知'), findsOneWidget);
+    expect(find.textContaining('完美校园'), findsWidgets);
+    expect(find.text('自启动与后台权限'), findsOneWidget);
+  });
+
+  testWidgets('水电查询页提示与提醒页一致，并可跳转到提醒设置', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: UtilityPage()));
+    await tester.pumpAndSettle();
+
+    final link = find.text('余额提醒设置');
+    await tester.dragUntilVisible(
+      link,
+      find.byType(ListView),
+      const Offset(0, -80),
+    );
+    await tester.pumpAndSettle();
+
+    // 两个页面共用同一段绑定提示文案
+    expect(find.textContaining('绑定宿舍并查询过一次'), findsOneWidget);
+
+    await tester.tap(link);
+    await tester.pumpAndSettle();
+    expect(find.text('余额不足时通知'), findsOneWidget);
+  });
+
+  testWidgets('设置页的模型来源与通知转写页是同一个配置页', (WidgetTester tester) async {
+    // 自定义来源但没填 Key：配置页的自动查询不会发起真实请求
+    SharedPreferences.setMockInitialValues({
+      'zsy_profile': _completeProfile,
+      'zsy_notice_guide_seen': true,
+      'zsy_utility_cache': _utilityCache(),
+      AiSourceRepository.prefsKey: const AiSourceConfig(
+        mode: AiSourceMode.custom,
+        providerId: 'deepseek',
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: '',
+        model: '',
+      ).encode(),
+    });
+    await tester.pumpWidget(const ZhangShangZhaoYuanApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('模型来源'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('配置模型来源'), findsOneWidget);
   });
 }

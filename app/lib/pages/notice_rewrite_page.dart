@@ -82,6 +82,9 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
 
   /// 打开配置页（二级页），保存后重新读取。
   ///
+  /// 与「设置 → 模型来源」进入的是同一个 [AiSourcePage]，配置只有一份，
+  /// 两个入口共享。
+  ///
   /// 用显式 MaterialPageRoute 而不是命名路由：命名路由在真机上出现过
   /// 点击无反应的案例，显式路由少一层注册依赖。
   Future<void> _openSourceConfig() async {

@@ -55,7 +55,7 @@ class Profile {
       jwglPassword.trim().isNotEmpty &&
       webvpnPassword.trim().isNotEmpty;
 
-  /// 是否已保存过密码，用于「我的」页面展示提示。
+  /// 是否已保存过密码，用于设置页/登录页展示提示。
   bool get hasPasswords =>
       jwglPassword.isNotEmpty || webvpnPassword.isNotEmpty;
 

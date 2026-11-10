@@ -1,6 +1,6 @@
 /// 水电费查询页。
 ///
-/// 进入页面用「我的」里已填写的学号自动查询；缓存/刷新分档与看板页
+/// 进入页面用「设置 → 编辑个人信息」里已填写的学号自动查询；缓存/刷新分档与看板页
 /// 共用同一套策略（见 services/utility_provider.dart）：
 ///   - 缓存 10 分钟内：直接展示缓存，不发起请求；
 ///   - 缓存 10 分钟 ~ 12 小时：先展示缓存，顶部显示「正在刷新」，
@@ -15,7 +15,9 @@ import 'package:flutter/material.dart';
 import '../models/utility.dart';
 import '../services/profile_repository.dart';
 import '../services/utility_provider.dart';
-import '../widgets/profile_dialog.dart';
+import '../widgets/utility_notes.dart';
+import 'profile_page.dart';
+import 'utility_alert_page.dart';
 
 /// 电费主题色（琥珀色）。
 const Color _kElectricityColor = Color(0xFFE8930C);
@@ -169,15 +171,24 @@ class _UtilityPageState extends State<UtilityPage> {
     );
   }
 
-  /// 未填写学号时引导填写。
+  /// 未填写学号时引导填写（整页表单，返回后重新查询）。
   Future<void> _editProfile() async {
     final profile = await ProfileRepository.load();
     if (!mounted) return;
-    final updated = await showProfileDialog(context, initial: profile);
-    if (updated == null) return;
-    await ProfileRepository.save(updated);
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ProfilePage(initial: profile),
+      ),
+    );
     if (!mounted) return;
     _init();
+  }
+
+  /// 跳到设置里的水电余额提醒页。
+  Future<void> _openReminderSettings() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => const UtilityAlertPage()),
+    );
   }
 
   @override
@@ -236,6 +247,9 @@ class _UtilityPageState extends State<UtilityPage> {
                 color: theme.colorScheme.outline,
               ),
             ),
+            const SizedBox(height: 16),
+            // 查不到最常见的原因是没在完美校园里绑定过，先说明这一点
+            const UtilityBindHintCard(),
             const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: _needsProfile
@@ -268,7 +282,8 @@ class _UtilityPageState extends State<UtilityPage> {
             children: [
               for (final room in rooms) _RoomCard(room: room),
               const SizedBox(height: 8),
-              const _ReminderNote(),
+              // 与「设置 → 水电余额提醒」共用同一套说明；这里多一个跳转入口
+              UtilityNotesCard(onOpenReminder: _openReminderSettings),
               const SizedBox(height: 8),
               Text(
                 '更新于 ${_formatTime(_fetchedAt)} · 数据来自完美校园',
@@ -520,58 +535,5 @@ class _BalanceTile extends StatelessWidget {
   }
 }
 
-/// 页面底部：低余额阈值与提醒功能的说明。
-class _ReminderNote extends StatelessWidget {
-  const _ReminderNote();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.notifications_active_outlined,
-                size: 15,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                '余额不足提醒',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.onSurface,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '· 余额低于阈值时，本页与看板上的数字会标红：'
-            '电 ≤ ${_trim(kLowElectricity)} 度、水 ≤ ${_trim(kLowWater)} 吨。\n'
-            '· 在「我的 → 水电余额提醒」开启后，每整点和半点自动查询一次，'
-            '余额从充足变为不足时发系统通知。\n'
-            '· 提醒依赖应用进程存活；若被系统清理后台将无法提醒，'
-            '建议在系统设置中允许本应用「自启动」并加入后台白名单。',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static String _trim(double v) =>
-      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
-}
+/// 页面底部：低余额阈值与提醒功能的说明已抽到 widgets/utility_notes.dart，
+/// 与「设置 → 水电余额提醒」共用，避免两处文案不一致。
