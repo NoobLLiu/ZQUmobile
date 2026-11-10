@@ -18,10 +18,12 @@ RELEASE_PAGE="https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/tag/${TAG}
 UPSTREAM="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
 
 api() { curl -sS --show-error --fail-with-body --max-time 180 "$@"; }
-# 境外 runner 往 Gitee 传 15–20MB 的 APK 明显慢于普通 API 请求，单独放宽超时。
+# 境外 runner 往 Gitee 传大 multipart 时会自动带 Expect: 100-continue，
+# 跨境链路常在这里卡死；显式去掉并固定 HTTP/1.1。
 upload() {
-  curl -sS --show-error --fail-with-body --max-time 900 \
-    --retry 2 --retry-delay 5 --retry-max-time 1800 \
+  curl -sS --show-error --fail-with-body --max-time 300 \
+    --http1.1 -H 'Expect:' \
+    --retry 1 --retry-delay 5 \
     -o /dev/null -w '  用时 %{time_total}s，平均 %{speed_upload} B/s\n' "$@"
 }
 log() { echo ":: $*"; }
@@ -117,7 +119,8 @@ CREATED=$(api -X POST "$API/releases" \
 RID=$(echo "$CREATED" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 [ -n "$RID" ] || { echo "::error::创建 Gitee Release 失败：$CREATED"; exit 1; }
 
-for name in "${APKS[@]}" version.json; do
+# 先传小的 version.json：既让自动更新数据源先就位，也能作为小文件连通性探针。
+for name in version.json "${APKS[@]}"; do
   log "上传 ${name}"
   upload -X POST "$API/releases/${RID}/attach_files?access_token=${GITEE_TOKEN}" \
     -F "file=@${WORK_DIR}/${name}"
