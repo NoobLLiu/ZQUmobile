@@ -6,6 +6,7 @@ library;
 import 'dart:io';
 
 import 'package:zhangshang_yanyuan/core/ai_credentials.dart';
+import 'package:zhangshang_yanyuan/models/ai_source.dart';
 import 'package:zhangshang_yanyuan/services/deepseek_client.dart';
 import 'package:zhangshang_yanyuan/services/notice_rewrite_prompt.dart';
 

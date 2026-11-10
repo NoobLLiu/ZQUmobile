@@ -6,6 +6,9 @@
 ///
 /// 这套规则与「班委通知转写」skill 完全一致（见 services/notice_rewrite_prompt.dart），
 /// 只是把原来跑在微信小程序里的一次性工具，搬进了天天会打开的 App。
+///
+/// 模型来源在右上角「配置模型来源」里切换：作者提供的免费模型，
+/// 或用户自己的 OpenAI 兼容服务。
 library;
 
 import 'dart:async';
@@ -13,9 +16,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/ai_source.dart';
+import '../services/ai_source_repository.dart';
 import '../services/deepseek_client.dart';
 import '../services/notice_rewrite_prompt.dart';
 import '../widgets/notice_guide_dialog.dart';
+
+/// 模型来源配置页的路由名（见 main.dart）。
+const String kAiSourceRoute = '/ai-source';
 
 /// 通知转写页。
 class NoticeRewritePage extends StatefulWidget {
@@ -45,7 +53,9 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
   int _greetingIndex = 0; // 默认「自动」
   int _targetIndex = 2; // 默认「各位同学」
   int _deadlineModeIndex = 0; // 默认「不修改」
-  int _modelIndex = 0;
+
+  /// 当前模型来源配置；默认走作者提供的免费模型。
+  AiSourceConfig _sourceConfig = const AiSourceConfig();
 
   bool _deepThinking = false;
   bool _generating = false;
@@ -61,8 +71,28 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
     _originalController.addListener(_onInputChanged);
     _sourceController.addListener(_onInputChanged);
     _deadlineController.addListener(_onInputChanged);
+    _loadSourceConfig();
     // 第一次进来先看一次示例；看过就不再打扰
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowGuide());
+  }
+
+  Future<void> _loadSourceConfig() async {
+    final config = await AiSourceRepository.load();
+    if (!mounted) return;
+    setState(() => _sourceConfig = config);
+  }
+
+  /// 打开配置页，保存后重新读取。
+  Future<void> _openSourceConfig() async {
+    final saved = await Navigator.of(context).pushNamed<bool>(kAiSourceRoute);
+    if (saved == true) await _loadSourceConfig();
+  }
+
+  /// 免费来源下切换 Flash / Pro，顺手记下来，下次进来保持。
+  void _selectFreeModel(int index) {
+    final config = _sourceConfig.copyWith(freeModelIndex: index);
+    setState(() => _sourceConfig = config);
+    unawaited(AiSourceRepository.save(config));
   }
 
   /// 首次打开自动弹示例。
@@ -140,6 +170,12 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
 
   /// 提交前的校验，全在前端做完，避免白花一次额度。
   String? _validate() {
+    if (!_sourceConfig.isFree) {
+      final problem = _sourceConfig.validateCustom();
+      if (problem != null) {
+        return '模型来源配置不完整：$problem（右上角「配置模型来源」里修改）';
+      }
+    }
     if (_originalController.text.trim().isEmpty) return '请先粘贴原通知';
     if (kSourceModes[_sourceModeIndex].key == 'custom' &&
         _sourceController.text.trim().isEmpty) {
@@ -177,7 +213,7 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
       original: _originalController.text.trim(),
     );
 
-    final client = DeepSeekClient();
+    final client = DeepSeekClient.fromConfig(_sourceConfig);
     _client = client;
     var acc = '';
     _lastFlush = 0;
@@ -190,10 +226,10 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
 
     try {
       await for (final delta in client.streamChat(
-        model: kAiModels[_modelIndex].id,
+        model: _sourceConfig.effectiveModel,
         systemPrompt: kNoticeSystemPrompt,
         userMessage: userMessage,
-        deepThinking: _deepThinking,
+        deepThinking: _sourceConfig.supportsThinking && _deepThinking,
       )) {
         acc += delta;
         final now = DateTime.now().millisecondsSinceEpoch;
@@ -255,6 +291,11 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
       appBar: AppBar(
         title: const Text('通知转写'),
         actions: [
+          IconButton(
+            tooltip: '配置模型来源',
+            onPressed: _generating ? null : _openSourceConfig,
+            icon: const Icon(Icons.tune_outlined),
+          ),
           IconButton(
             tooltip: '使用示例',
             onPressed: _generating
@@ -450,6 +491,61 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
     );
   }
 
+  int get _freeModelIndex =>
+      _sourceConfig.freeModelIndex.clamp(0, kAiModels.length - 1);
+
+  /// 选项页里的来源条：显示当前用的是哪套模型，点「配置」进去换。
+  Widget _buildSourceBanner(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    final free = _sourceConfig.isFree;
+    final title =
+        free ? '免费模型（作者提供）' : '自行配置 · ${_sourceConfig.providerName}';
+    final detail = free
+        ? _sourceConfig.effectiveModel
+        : '${_sourceConfig.effectiveModel} · ${_sourceConfig.baseUrl.trim()}';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            free ? Icons.card_giftcard_outlined : Icons.tune_outlined,
+            size: 20,
+            color: scheme.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail.trim().isEmpty ? '未配置' : detail,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: _generating ? null : _openSourceConfig,
+            child: const Text('配置'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildOptionsCard(ThemeData theme) {
     final sourceMode = kSourceModes[_sourceModeIndex];
     return _Card(
@@ -534,43 +630,47 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
             ),
           ],
 
-          _FieldLabel('AI 模型'),
-          _ChipRow<int>(
-            values: [for (var i = 0; i < kAiModels.length; i++) i],
-            selected: _modelIndex,
-            labelOf: (i) => kAiModels[i].label,
-            onSelected: _generating ? null : (i) => setState(() => _modelIndex = i),
-          ),
-          _Hint(kAiModels[_modelIndex].hint),
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('深度思考',
-                          style: theme.textTheme.bodyMedium
-                              ?.copyWith(fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 2),
-                      Text(
-                        '先推理再动笔，更慢更贵；通知结构简单时关掉更快。',
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: theme.colorScheme.outline),
-                      ),
-                    ],
-                  ),
-                ),
-                Switch(
-                  value: _deepThinking,
-                  onChanged: _generating
-                      ? null
-                      : (v) => setState(() => _deepThinking = v),
-                ),
-              ],
+          _FieldLabel('AI 模型来源'),
+          _buildSourceBanner(theme),
+          if (_sourceConfig.isFree) ...[
+            const SizedBox(height: 4),
+            _ChipRow<int>(
+              values: [for (var i = 0; i < kAiModels.length; i++) i],
+              selected: _freeModelIndex,
+              labelOf: (i) => kAiModels[i].label,
+              onSelected: _generating ? null : _selectFreeModel,
             ),
-          ),
+            _Hint(kAiModels[_freeModelIndex].hint),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('深度思考',
+                            style: theme.textTheme.bodyMedium
+                                ?.copyWith(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Text(
+                          '先推理再动笔，更慢更贵；通知结构简单时关掉更快。',
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: theme.colorScheme.outline),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _deepThinking,
+                    onChanged: _generating
+                        ? null
+                        : (v) => setState(() => _deepThinking = v),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -694,8 +794,8 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '作品提交阶段，为了方便演示，这里直接使用了参赛组自己的 API Key，'
-              '正常情况下会让用户填自己的 API Key。',
+              '作品提交阶段默认使用作者提供的免费模型，方便演示时打开即用；'
+              '也可以在右上角「配置模型来源」里换成自己的厂商和 API Key。',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.outline, height: 1.6),
             ),

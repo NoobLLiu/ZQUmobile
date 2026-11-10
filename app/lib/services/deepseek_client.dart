@@ -1,6 +1,8 @@
-/// DeepSeek 流式对话客户端。
+/// OpenAI 兼容格式的流式对话客户端。
 ///
-/// 只做一件事：把一段对话发出去，把模型逐段吐出来的文本变成 `Stream<String>`。
+/// 内置来源走 DeepSeek 官方接口；自行配置时可以换成任意 OpenAI 兼容服务
+/// （只换 endpoint / Key / 模型名，请求体格式不变）。
+///
 /// 用 `HttpClient` 直接读 SSE，不引第三方 HTTP 库，理由有二：
 /// 1. `dart:io` 自带，配 `HttpClient.close(force: true)` 就能真的中断请求；
 /// 2. 少一个依赖，CI 上少一次解算风险。
@@ -11,6 +13,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../core/ai_credentials.dart';
+import '../models/ai_source.dart';
 
 /// 一次 AI 调用失败。
 class AiException implements Exception {
@@ -26,34 +29,40 @@ class AiException implements Exception {
   String toString() => message;
 }
 
-/// 可选的模型。
-class AiModelOption {
-  const AiModelOption(this.id, this.label, this.hint);
-
-  final String id;
-  final String label;
-  final String hint;
-}
-
-/// App 里开放的模型：够用就好，不把整个目录摊给用户。
-const List<AiModelOption> kAiModels = [
-  AiModelOption('deepseek-flash', 'DeepSeek V4.1 Flash', '默认，速度快，日常通知够用'),
-  AiModelOption('deepseek-v4-pro', 'DeepSeek V4 Pro', '更稳，长通知 / 复杂补充要求时用'),
-];
-
-/// 默认模型。
-const String kDefaultModelId = 'deepseek-flash';
-
 /// 一次请求的总时限：超过就中断，避免界面无限转圈。
 const Duration _kOverallTimeout = Duration(seconds: 150);
 
-/// DeepSeek 流式对话。
+/// 连接测试的时限，比正式转写短，别让用户干等。
+const Duration _kTestTimeout = Duration(seconds: 30);
+
+/// OpenAI 兼容的流式对话。
 class DeepSeekClient {
-  DeepSeekClient({String? apiKey, Duration? connectTimeout})
-      : _apiKey = apiKey ?? deepSeekApiKey(),
+  DeepSeekClient({
+    String? apiKey,
+    String? endpoint,
+    this._sendThinkingParam = true,
+    Duration? connectTimeout,
+  })  : _apiKey = apiKey ?? deepSeekApiKey(),
+        _endpoint = endpoint ?? kDeepSeekEndpoint,
         _connectTimeout = connectTimeout ?? const Duration(seconds: 20);
 
+  /// 按当前「模型来源」配置构造客户端。
+  factory DeepSeekClient.fromConfig(
+    AiSourceConfig config, {
+    Duration? connectTimeout,
+  }) =>
+      DeepSeekClient(
+        apiKey: config.effectiveApiKey,
+        endpoint: config.chatUrl,
+        sendThinkingParam: config.supportsThinking,
+        connectTimeout: connectTimeout,
+      );
+
   final String _apiKey;
+  final String _endpoint;
+
+  /// 只有 DeepSeek 官方认识 `thinking` 字段，第三方服务一律不发。
+  final bool _sendThinkingParam;
   final Duration _connectTimeout;
 
   HttpClient? _client;
@@ -66,6 +75,34 @@ class DeepSeekClient {
   void cancel() {
     _cancelled = true;
     _client?.close(force: true);
+  }
+
+  /// 组装请求体。测试连接和正式转写共用，保证测的就是真正会发的格式。
+  Map<String, dynamic> _buildPayload({
+    required String model,
+    required String systemPrompt,
+    required String userMessage,
+    required bool stream,
+    required int maxTokens,
+    bool deepThinking = false,
+  }) =>
+      <String, dynamic>{
+        'model': model,
+        'messages': [
+          {'role': 'system', 'content': systemPrompt},
+          {'role': 'user', 'content': userMessage},
+        ],
+        'stream': stream,
+        'max_tokens': maxTokens,
+        if (shouldSendThinking(_sendThinkingParam, deepThinking))
+          'thinking': {'type': 'disabled'},
+      };
+
+  void _setHeaders(HttpClientRequest request) {
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_apiKey');
+    request.headers
+        .set(HttpHeaders.contentTypeHeader, 'application/json; charset=utf-8');
+    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
   }
 
   /// 发起一次流式对话，逐段返回正文增量。
@@ -83,26 +120,22 @@ class DeepSeekClient {
     final client = HttpClient()..connectionTimeout = _connectTimeout;
     _client = client;
 
-    final payload = <String, dynamic>{
-      'model': model,
-      'messages': [
-        {'role': 'system', 'content': systemPrompt},
-        {'role': 'user', 'content': userMessage},
-      ],
-      'stream': true,
-      'max_tokens': 4096,
-      if (!deepThinking) 'thinking': {'type': 'disabled'},
-    };
+    final payload = _buildPayload(
+      model: model,
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      deepThinking: deepThinking,
+      stream: true,
+      maxTokens: 4096,
+    );
 
     final stopwatch = Stopwatch()..start();
 
     try {
       final HttpClientResponse response;
       try {
-        final request = await client.postUrl(Uri.parse(kDeepSeekEndpoint));
-        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_apiKey');
-        request.headers
-            .set(HttpHeaders.contentTypeHeader, 'application/json; charset=utf-8');
+        final request = await client.postUrl(Uri.parse(_endpoint));
+        _setHeaders(request);
         request.headers.set(HttpHeaders.acceptHeader, 'text/event-stream');
         request.add(utf8.encode(jsonEncode(payload)));
         response = await request.close();
@@ -168,6 +201,52 @@ class DeepSeekClient {
     }
   }
 
+  /// 测试连接：发一条最短的非流式请求，能拿到 200 就算通。
+  ///
+  /// 用的是和保存后完全一样的 endpoint / Key / 模型 / 请求体格式，
+  /// 所以测试通过基本等于转写能用。返回模型回复的一句话，供界面展示。
+  Future<String> testConnection({required String model}) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
+    try {
+      return await _doTest(client, model).timeout(
+        _kTestTimeout,
+        onTimeout: () => throw AiException('连接测试超时，请检查地址与网络。'),
+      );
+    } on AiException {
+      rethrow;
+    } on SocketException catch (e) {
+      throw AiException(_describeSocketError(e));
+    } on HttpException catch (e) {
+      throw AiException('网络连接中断：${e.message}');
+    } catch (e) {
+      throw AiException('连接测试失败：$e');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<String> _doTest(HttpClient client, String model) async {
+    final payload = _buildPayload(
+      model: model,
+      systemPrompt: '你是一个连通性测试助手。',
+      userMessage: '只回复两个字：正常',
+      stream: false,
+      maxTokens: 16,
+    );
+    final request = await client.postUrl(Uri.parse(_endpoint));
+    _setHeaders(request);
+    request.add(utf8.encode(jsonEncode(payload)));
+    final response = await request.close();
+    if (response.statusCode != HttpStatus.ok) {
+      final body = await _readAll(response);
+      throw AiException(
+        _describeHttpError(response.statusCode, body),
+        statusCode: response.statusCode,
+      );
+    }
+    return _extractTestReply(await _readAll(response));
+  }
+
   static Future<String> _readAll(HttpClientResponse response) async {
     try {
       return await response.transform(utf8.decoder).join();
@@ -176,10 +255,39 @@ class DeepSeekClient {
     }
   }
 
+  static String _extractTestReply(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map) {
+        final error = decoded['error'];
+        if (error is Map) {
+          final msg = (error['message'] ?? '').toString();
+          throw AiException(msg.isEmpty ? 'AI 服务返回了错误' : msg);
+        }
+        final choices = decoded['choices'];
+        if (choices is List && choices.isNotEmpty && choices.first is Map) {
+          final first = choices.first as Map;
+          final message = first['message'];
+          if (message is Map && message['content'] is String) {
+            final text = (message['content'] as String).trim();
+            if (text.isNotEmpty) return text;
+          }
+          final text = first['text'];
+          if (text is String && text.trim().isNotEmpty) return text.trim();
+        }
+      }
+    } on AiException {
+      rethrow;
+    } on FormatException {
+      // 返回体不是 JSON：状态码已是 200，仍算连通
+    }
+    return '（接口已连通，未解析到回复文本）';
+  }
+
   static String _describeSocketError(SocketException e) {
     final text = e.message;
     if (text.contains('timed out') || e.osError?.message.contains('timed out') == true) {
-      return '连接 DeepSeek 超时，请检查网络后重试。';
+      return '连接模型服务超时，请检查网络后重试。';
     }
     return '网络不可用，请检查网络后重试。';
   }
@@ -190,15 +298,17 @@ class DeepSeekClient {
       case 400:
         return '请求参数有误${detail.isEmpty ? '' : '：$detail'}';
       case 401:
-        return 'AI 凭据无效或已过期，暂时无法使用。';
+        return 'API Key 无效或已过期，请检查后重试。';
       case 402:
-        return 'AI 账户余额不足，暂时无法使用。';
+        return '账户余额不足，暂时无法使用。';
+      case 404:
+        return '找不到接口，请检查 Base URL 是否填对（需 OpenAI 兼容地址）。';
       case 422:
         return '请求内容不被接受${detail.isEmpty ? '' : '：$detail'}';
       case 429:
         return '请求太频繁了，请稍后再试。';
       default:
-        if (status >= 500) return 'AI 服务暂时不可用，请稍后再试。';
+        if (status >= 500) return '模型服务暂时不可用，请稍后再试。';
         return 'AI 调用失败（HTTP $status）${detail.isEmpty ? '' : '：$detail'}';
     }
   }
