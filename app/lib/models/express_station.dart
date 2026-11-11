@@ -2,13 +2,16 @@
 ///
 /// 营业时间为预先录入的驿站公示时间，结合当前系统时间判定能否去拿快递：
 ///   - 红：未营业（含「驿站开门但校门已关 → 不可达」两种情况）
-///   - 黄：营业中，但距结束营业不足 30 分钟
+///   - 黄：营业中距打烊不足 30 分钟，或尚未营业但距开门不足 30 分钟
 ///   - 绿：正常营业中
 ///   - 灰：数据待补充
 library;
 
 /// 打烊预警窗口：距结束营业不足该时长时，卡片转黄。
 const int kClosingSoonMinutes = 30;
+
+/// 开门预警窗口：距开始营业不足该时长时，卡片也转黄。
+const int kOpeningSoonMinutes = 30;
 
 /// 一段当日营业时间，按分钟存储（[open, close) 左闭右开）。
 class TimeRange {
@@ -98,6 +101,9 @@ enum ExpressStatus {
   /// 营业中，距打烊不足 30 分钟（黄）。
   closingSoon,
 
+  /// 尚未营业，但距开门不足 30 分钟（黄）。
+  openingSoon,
+
   /// 未营业（红）。
   closed,
 
@@ -114,6 +120,7 @@ class ExpressStatusResult {
     required this.status,
     this.hours,
     this.minutesToClose,
+    this.minutesToOpen,
   });
 
   /// 当前状态。
@@ -122,8 +129,11 @@ class ExpressStatusResult {
   ///今日生效的营业时间（noData 时为 null）。
   final TimeRange? hours;
 
-  /// 距打烊分钟数（仅营业中有意义）。
+  /// 距打烊分钟数（仅「即将打烊」有意义）。
   final int? minutesToClose;
+
+  /// 距开门分钟数（仅「即将营业」有意义）。
+  final int? minutesToOpen;
 }
 
 /// 判定驿站当前状态。
@@ -141,6 +151,15 @@ ExpressStatusResult evaluateExpressStation(
   final today = station.hoursFor(now.weekday)!;
 
   if (!today.contains(minutes)) {
+    // 开门前不足 30 分钟：同样用黄色提醒「快开门了」；打烊后不触发。
+    final untilOpen = today.open - minutes;
+    if (untilOpen > 0 && untilOpen <= kOpeningSoonMinutes) {
+      return ExpressStatusResult(
+        status: ExpressStatus.openingSoon,
+        hours: today,
+        minutesToOpen: untilOpen,
+      );
+    }
     return ExpressStatusResult(
       status: ExpressStatus.closed,
       hours: today,
@@ -214,6 +233,12 @@ final List<ExpressStationGroup> kExpressStationGroups = [
     name: '南门',
     stations: [
       ExpressStation(name: '南门车库驿站'),
+    ],
+  ),
+  ExpressStationGroup(
+    name: '北门',
+    stations: [
+      ExpressStation(name: '北门驿站'),
     ],
   ),
 ];

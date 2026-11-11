@@ -1,7 +1,7 @@
 /// 快递站状态页。
 ///
 /// 按校门分组展示各驿站的实时营业状态：
-///   - 绿：营业中；黄：距打烊不足 30 分钟；红：未营业 / 校门已关不可达；灰：数据待补充
+///   - 绿：营业中；黄：距打烊 / 距开门不足 30 分钟；红：未营业 / 校门已关不可达；灰：数据待补充
 /// 分组默认展开，点分组栏的小箭头可折叠；状态随系统时间每 30 秒自动刷新。
 library;
 
@@ -82,8 +82,7 @@ class _ExpressStationPageState extends State<ExpressStationPage> {
             const SizedBox(height: 12),
           ],
           Text(
-            '营业时间为预先录入的公示时间，以驿站现场公告为准；'
-            '「南门车库驿站」等数据待补充，欢迎反馈。',
+            '此模块时间仅作功能演示，部分内容待修正，部分数据待补充。',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.outline,
@@ -108,15 +107,16 @@ class _LegendBar extends StatelessWidget {
         color: theme.colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: const Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: const Wrap(
+        alignment: WrapAlignment.center,
+        spacing: 12,
+        runSpacing: 6,
         children: [
           _LegendDot(color: _kGreenBase, label: '营业'),
-          SizedBox(width: 12),
+          // 黄色同时代表「快开门」和「快打烊」，两个状态各列一项。
+          _LegendDot(color: _kAmberBase, label: '将营业'),
           _LegendDot(color: _kAmberBase, label: '将打烊'),
-          SizedBox(width: 12),
           _LegendDot(color: _kRedBase, label: '未营业'),
-          SizedBox(width: 12),
           _LegendDot(color: _kGrayBase, label: '待补充'),
         ],
       ),
@@ -270,6 +270,7 @@ class _StationCard extends StatelessWidget {
   Color get _baseColor => switch (result.status) {
         ExpressStatus.open => _kGreenBase,
         ExpressStatus.closingSoon => _kAmberBase,
+        ExpressStatus.openingSoon => _kAmberBase,
         ExpressStatus.closed => _kRedBase,
         ExpressStatus.unreachable => _kRedBase,
         ExpressStatus.noData => _kGrayBase,
@@ -280,6 +281,9 @@ class _StationCard extends StatelessWidget {
             ? const Color(0xFF1E8E5A)
             : const Color(0xFF5BC98C),
         ExpressStatus.closingSoon => brightness == Brightness.light
+            ? const Color(0xFFB45309)
+            : const Color(0xFFF0B454),
+        ExpressStatus.openingSoon => brightness == Brightness.light
             ? const Color(0xFFB45309)
             : const Color(0xFFF0B454),
         ExpressStatus.closed => brightness == Brightness.light
@@ -301,6 +305,8 @@ class _StationCard extends StatelessWidget {
         return '营业中';
       case ExpressStatus.closingSoon:
         return '即将打烊 · 剩 ${result.minutesToClose} 分钟';
+      case ExpressStatus.openingSoon:
+        return '即将营业 · 还有 ${result.minutesToOpen} 分钟';
       case ExpressStatus.closed:
         final minutes = now.hour * 60 + now.minute;
         if (hours != null && minutes < hours.open) {
