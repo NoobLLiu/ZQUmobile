@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用内更新：允许 FileProvider 共享应用私有缓存目录里的 APK。
+     只开 cache-path，不给外部存储。 -->
+<paths>
+    <cache-path
+        name="upgrade"
+        path="upgrade/" />
+</paths>

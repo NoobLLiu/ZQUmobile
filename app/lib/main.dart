@@ -8,6 +8,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'core/build_info.dart';
 import 'pages/attachment_schedule_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/express_station_page.dart';
@@ -20,6 +21,7 @@ import 'pages/timetable_page.dart';
 import 'pages/utility_page.dart';
 import 'services/profile_repository.dart';
 import 'services/utility_reminder.dart';
+import 'widgets/update_flow.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -105,7 +107,16 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     // 首帧后检查个人信息，首次使用或资料不完整时引导填写
-    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureProfile());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ensureProfile();
+      // 无感自动检测更新：等界面稳定后再查，只在新版本时弹窗打扰。
+      // 本地构建（无 CI 注入版本号）跳过，避免每次误报有新版本。
+      if (BuildInfo.isCi) {
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) checkForUpdate(context, silent: true);
+        });
+      }
+    });
   }
 
   @override

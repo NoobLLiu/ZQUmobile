@@ -1,13 +1,28 @@
-/// 关于掌上砚园：版本与构建信息。
+/// 关于掌上砚园：版本与构建信息、检测更新、开源许可。
 library;
 
 import 'package:flutter/material.dart';
 
 import '../core/build_info.dart';
+import '../widgets/update_flow.dart';
 
 /// 关于页。
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});
+
+  /// 开源许可用 Flutter 自带的整页 LicensePage。
+  static void _openLicenses(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LicensePage(
+          applicationName: '掌上砚园',
+          applicationVersion: BuildInfo.displayVersion,
+          applicationIcon: const Icon(Icons.school_outlined, size: 40),
+          applicationLegalese: '肇庆学院校园助手',
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -74,6 +89,33 @@ class AboutPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
+          Card(
+            color: scheme.surfaceContainerLow,
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                _action(
+                  context,
+                  icon: Icons.system_update_outlined,
+                  title: '检测更新',
+                  onTap: (ctx) => checkForUpdate(ctx),
+                ),
+                Divider(
+                  height: 0.5,
+                  thickness: 0.5,
+                  indent: 52,
+                  color: scheme.outlineVariant.withValues(alpha: 0.5),
+                ),
+                _action(
+                  context,
+                  icon: Icons.description_outlined,
+                  title: '开源许可',
+                  onTap: _openLicenses,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
           Text(
             '提供教务课表导入与查看、通知转写、宿舍水电查询与余额提醒等功能。'
             '账号与密码仅保存在本机，不会上传到任何服务器。',
@@ -111,6 +153,34 @@ class AboutPage extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 一行可点击的操作，样式与设置页的行一致。
+  Widget _action(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required void Function(BuildContext) onTap,
+  }) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () => onTap(context),
+      child: SizedBox(
+        height: 52,
+        child: Row(
+          children: [
+            const SizedBox(width: 16),
+            Icon(icon, size: 20, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(title, style: theme.textTheme.bodyLarge),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: theme.colorScheme.outline),
+            const SizedBox(width: 12),
+          ],
+        ),
       ),
     );
   }

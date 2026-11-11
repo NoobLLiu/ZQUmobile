@@ -5,7 +5,6 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../core/build_info.dart';
 import 'about_page.dart';
 import 'ai_source_page.dart';
 import 'clear_timetable_page.dart';
@@ -77,30 +76,12 @@ class SettingsPage extends StatelessWidget {
               _Item(
                 icon: Icons.info_outline,
                 title: '关于掌上砚园',
+                // 版本信息、检测更新、开源许可都收在关于页里
                 page: (_) => const AboutPage(),
-              ),
-              _Item(
-                icon: Icons.description_outlined,
-                title: '开源许可',
-                onTap: _openLicenses,
               ),
             ],
           ),
         ],
-      ),
-    );
-  }
-
-  /// 开源许可用 Flutter 自带的整页 LicensePage。
-  static void _openLicenses(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => LicensePage(
-          applicationName: '掌上砚园',
-          applicationVersion: BuildInfo.displayVersion,
-          applicationIcon: const Icon(Icons.school_outlined, size: 40),
-          applicationLegalese: '肇庆学院校园助手',
-        ),
       ),
     );
   }
@@ -173,12 +154,8 @@ class _Row extends StatelessWidget {
 
     return InkWell(
       onTap: () {
-        final page = item.page;
-        if (page != null) {
-          Navigator.of(context).push(MaterialPageRoute<void>(builder: page));
-        } else {
-          item.onTap?.call(context);
-        }
+        Navigator.of(context)
+            .push(MaterialPageRoute<void>(builder: item.page));
       },
       child: SizedBox(
         height: 52,
@@ -209,19 +186,15 @@ class _Item {
   const _Item({
     required this.icon,
     required this.title,
-    this.page,
-    this.onTap,
+    required this.page,
     this.danger = false,
   });
 
   final IconData icon;
   final String title;
 
-  /// 目标页面（优先于 [onTap]）。
-  final WidgetBuilder? page;
-
-  /// 不需要新建页面的动作（如系统 LicensePage）。
-  final void Function(BuildContext context)? onTap;
+  /// 目标页面。
+  final WidgetBuilder page;
 
   /// 危险操作标红。
   final bool danger;
