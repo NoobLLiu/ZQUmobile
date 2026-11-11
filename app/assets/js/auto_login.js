@@ -450,8 +450,13 @@
       finish('已登录教务系统');
       return;
     }
-    // 校内直连且没有登录表单 → 说明会话还在，已经在教务里了
-    if (cfg.expect === 'jwgl') {
+    // 校内直连且没有登录表单 → 说明会话还在，已经在教务里了。
+    // 但校外开 jwgl 会被 302 到 WebVPN：expect 也是 'jwgl'，登录完
+    // WebVPN 后落在门户页——人还没进教务，不能在这里提前收工，
+    // 要继续走「找教务入口 → 点进去 → 登录教务」的链路。
+    // 判据：还在 webvpn 域上就继续推进（教务主页场景已被
+    // looksLikeJwglHome 的 /http/ 代理路径判据提前接住）。
+    if (cfg.expect === 'jwgl' && !/webvpn/i.test(location.hostname)) {
       finish('已进入教务系统');
       return;
     }

@@ -95,8 +95,8 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   /// 菜单里手动指定的自动登录目标（`'webvpn'` 或 `null`）。
   ///
   /// 只有选「WebVPN」时才强制为 `'webvpn'`；选「教务系统」保持 `null`，
-  /// 让脚本按「是否已购校园网」自行决定——校外直接开 jwgl 会被 302 到
-  /// WebVPN，此时强填 `'jwgl'` 会在门户页被误判成"已进入教务"而提前结束。
+  /// 让脚本按「是否已购校园网」自行决定。校外开 jwgl 会被 302 到 WebVPN
+  /// 登录页，脚本登录完 WebVPN 后会继续在门户页找教务入口推进。
   String? _autoTarget;
 
   /// 弹窗是否挡住网页（true 时盖一层深色蒙层；false 时只浮一个卡片）。
