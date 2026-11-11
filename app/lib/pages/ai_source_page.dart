@@ -1,14 +1,12 @@
 /// 配置模型来源。
 ///
-/// 通知转写的 AI 可以走两条路：
-/// - 免费模型（作者提供）：内置 Key + DeepSeek 官方接口，打开即用；
-/// - 自行配置：用户填自己的 OpenAI 兼容服务，厂商下拉框参考 CC Switch
-///   的预置做法——选中厂商就自动填好 Base URL 和可参考的模型名称，
-///   只需要补一个 API Key。
+/// 通知转写的 AI 走用户自己的 OpenAI 兼容服务：厂商下拉框参考 CC Switch
+/// 的预置做法——选中厂商就自动填好 Base URL 和可参考的模型名称，
+/// 只需要补一个 API Key。
 ///
-/// 两种来源都能点「测试连接」，测的就是保存后会真正发出的请求。
-/// 选中厂商（或填好 Key）后还会自动查一次可用模型与账户余额——各家能力不同，
-/// 余额只有 DeepSeek / Kimi / 硅基流动 / OpenRouter 有公开接口。
+/// 可以点「测试连接」，测的就是保存后会真正发出的请求。
+/// 选好厂商（或填好 Key）后还会自动查一次可用模型与账户余额——各家能力不同，
+/// 余额只有 DeepSeek / Kimi 有公开接口。
 library;
 
 import 'package:flutter/material.dart';
@@ -35,9 +33,7 @@ class _AiSourcePageState extends State<AiSourcePage> {
   final _apiKeyController = TextEditingController();
   final _modelController = TextEditingController();
 
-  AiSourceMode _mode = AiSourceMode.free;
   String _providerId = 'deepseek';
-  int _freeModelIndex = 0;
   bool _obscureKey = true;
 
   bool _loading = true;
@@ -72,25 +68,26 @@ class _AiSourcePageState extends State<AiSourcePage> {
     final config = await AiSourceRepository.load();
     if (!mounted) return;
     setState(() {
-      _mode = config.mode;
       _providerId = config.providerId;
-      _freeModelIndex = config.freeModelIndex.clamp(0, kAiModels.length - 1);
       _baseUrlController.text = config.baseUrl;
       _apiKeyController.text = config.apiKey;
       _modelController.text = config.model;
       _loading = false;
     });
-    _scheduleProbe();
+    // 从没配置过时按默认厂商预填，用户只需补 Key
+    if (config.baseUrl.trim().isEmpty && config.model.trim().isEmpty) {
+      _applyPreset(_providerId);
+    } else {
+      _scheduleProbe();
+    }
   }
 
   /// 当前表单对应的配置（未保存也能拿来测连接）。
   AiSourceConfig _currentConfig() => AiSourceConfig(
-        mode: _mode,
         providerId: _providerId,
         baseUrl: _baseUrlController.text.trim(),
         apiKey: _apiKeyController.text.trim(),
         model: _modelController.text.trim(),
-        freeModelIndex: _freeModelIndex,
       );
 
   void _clearTest() {
@@ -98,7 +95,7 @@ class _AiSourcePageState extends State<AiSourcePage> {
     _testMessage = '';
   }
 
-  /// 清掉上一轮查询结果，切换厂商 / 来源时用。
+  /// 清掉上一轮查询结果，切换厂商时用。
   void _resetProbe() {
     _modelIds = const [];
     _modelsError = null;
@@ -123,28 +120,11 @@ class _AiSourcePageState extends State<AiSourcePage> {
     _scheduleProbe();
   }
 
-  void _onModeChanged(AiSourceMode mode) {
-    if (mode == _mode) return;
-    setState(() {
-      _mode = mode;
-      _clearTest();
-      _resetProbe();
-      // 第一次切到自行配置时，按当前厂商把地址和模型名预填好
-      if (!mode.isFree &&
-          _baseUrlController.text.trim().isEmpty &&
-          _modelController.text.trim().isEmpty) {
-        _applyPreset(_providerId);
-      }
-    });
-    _scheduleProbe();
-  }
-
   // ------------------------------------------------------ 模型列表与余额
 
-  /// 免费来源随时可查（内置 Key）；自行配置要先把地址和 Key 填上。
+  /// 要先把地址和 Key 填上才查。
   bool _canProbe(AiSourceConfig config) =>
-      config.isFree ||
-      (config.baseUrl.trim().isNotEmpty && config.apiKey.trim().isNotEmpty);
+      config.baseUrl.trim().isNotEmpty && config.apiKey.trim().isNotEmpty;
 
   /// 等这一帧画完再查，避免在 setState 里直接发请求。
   void _scheduleProbe() {
@@ -241,15 +221,13 @@ class _AiSourcePageState extends State<AiSourcePage> {
   Future<void> _testConnection() async {
     if (_testing) return;
     final config = _currentConfig();
-    if (!config.isFree) {
-      final problem = config.validateCustom();
-      if (problem != null) {
-        setState(() {
-          _testOk = false;
-          _testMessage = problem;
-        });
-        return;
-      }
+    final problem = config.validate();
+    if (problem != null) {
+      setState(() {
+        _testOk = false;
+        _testMessage = problem;
+      });
+      return;
     }
 
     setState(() {
@@ -289,15 +267,13 @@ class _AiSourcePageState extends State<AiSourcePage> {
 
   Future<void> _save() async {
     final config = _currentConfig();
-    if (!config.isFree) {
-      final problem = config.validateCustom();
-      if (problem != null) {
-        setState(() {
-          _testOk = false;
-          _testMessage = problem;
-        });
-        return;
-      }
+    final problem = config.validate();
+    if (problem != null) {
+      setState(() {
+        _testOk = false;
+        _testMessage = problem;
+      });
+      return;
     }
     await AiSourceRepository.save(config);
     if (!mounted) return;
@@ -315,9 +291,7 @@ class _AiSourcePageState extends State<AiSourcePage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
-                _buildSourceCard(),
-                const SizedBox(height: 12),
-                if (_mode.isFree) _buildFreeCard() else _buildCustomCard(),
+                _buildCustomCard(),
                 const SizedBox(height: 12),
                 _buildProbeCard(),
                 const SizedBox(height: 16),
@@ -346,91 +320,7 @@ class _AiSourcePageState extends State<AiSourcePage> {
     );
   }
 
-  // ------------------------------------------------------------ 来源选择
-
-  Widget _buildSourceCard() {
-    final theme = Theme.of(context);
-    return _Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _SectionTitle('① 配置模型来源'),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              ChoiceChip(
-                label: const Text('免费模型（作者提供）'),
-                selected: _mode.isFree,
-                showCheckmark: false,
-                onSelected: (_) => _onModeChanged(AiSourceMode.free),
-              ),
-              ChoiceChip(
-                label: const Text('自行配置'),
-                selected: !_mode.isFree,
-                showCheckmark: false,
-                onSelected: (_) => _onModeChanged(AiSourceMode.custom),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            _mode.isFree
-                ? '使用作者提供的 DeepSeek 官方接口，不用填 Key，打开就能转写。'
-                : '填自己的 API Key，可接入任何 OpenAI 兼容的大模型服务。',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.outline, height: 1.5),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ------------------------------------------------------------ 免费模型
-
-  Widget _buildFreeCard() {
-    final theme = Theme.of(context);
-    return _Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _SectionTitle('② 免费模型'),
-          Text('模型', style: theme.textTheme.bodyMedium),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (var i = 0; i < kAiModels.length; i++)
-                ChoiceChip(
-                  label: Text(kAiModels[i].label),
-                  selected: _freeModelIndex == i,
-                  showCheckmark: false,
-                  onSelected: (_) => setState(() {
-                    _freeModelIndex = i;
-                    _clearTest();
-                  }),
-                ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          _Hint(kAiModels[_freeModelIndex].hint),
-          const SizedBox(height: 14),
-          _InfoLine('接口地址', 'api.deepseek.com/chat/completions'),
-          _InfoLine('鉴权方式', '作者提供的免费额度，无需填写 API Key'),
-          const SizedBox(height: 6),
-          Text(
-            '这是作品提交阶段的演示配置。想用自己的账号或换厂商，'
-            '选上面的「自行配置」即可。',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.outline, height: 1.5),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ------------------------------------------------------------ 自行配置
+  // ------------------------------------------------------------ 厂商与连接
 
   Widget _buildCustomCard() {
     final theme = Theme.of(context);
@@ -439,10 +329,9 @@ class _AiSourcePageState extends State<AiSourcePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle('② 自行配置（OpenAI 格式）'),
+          const _SectionTitle('① 模型厂商'),
 
           // 厂商下拉：最后一个选项是自定义
-          const _FieldLabel('模型厂商'),
           DropdownButtonFormField<String>(
             initialValue: _providerId,
             isExpanded: true,
@@ -554,7 +443,7 @@ class _AiSourcePageState extends State<AiSourcePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle('③ 服务信息'),
+          const _SectionTitle('② 服务信息'),
           Row(
             children: [
               Expanded(
@@ -756,7 +645,7 @@ class _AiSourcePageState extends State<AiSourcePage> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '自行填写的 API Key 只保存在本机，用于发起转写请求，不会上传到其它地方。'
+              '填写的 API Key 只保存在本机，用于发起转写请求，不会上传到其它地方。'
               '「测试连接」会消耗一次极少量的模型调用额度。',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.outline,
@@ -865,40 +754,6 @@ class _ProbeHint extends StatelessWidget {
       style: theme.textTheme.bodySmall?.copyWith(
         color: color ?? theme.colorScheme.outline,
         height: 1.6,
-      ),
-    );
-  }
-}
-
-class _InfoLine extends StatelessWidget {
-  const _InfoLine(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 72,
-            child: Text(
-              label,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.outline),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value,
-              style: theme.textTheme.bodySmall,
-            ),
-          ),
-        ],
       ),
     );
   }

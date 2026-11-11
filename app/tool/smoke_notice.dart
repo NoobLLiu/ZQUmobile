@@ -1,11 +1,14 @@
-/// 临时联调脚本：用真实 DeepSeek 接口跑一遍通知转写，检查输出格式是否守规矩。
+/// 临时联调脚本：用真实接口跑一遍通知转写，检查输出格式是否守规矩。
 ///
-/// 用法：cd app && dart run tool/smoke_notice.dart
+/// Key 不再内置，从环境变量读取：
+///
+/// ```bash
+/// cd app && DEEPSEEK_API_KEY=sk-xxx dart run tool/smoke_notice.dart
+/// ```
 library;
 
 import 'dart:io';
 
-import 'package:zhangshang_yanyuan/core/ai_credentials.dart';
 import 'package:zhangshang_yanyuan/models/ai_source.dart';
 import 'package:zhangshang_yanyuan/services/deepseek_client.dart';
 import 'package:zhangshang_yanyuan/services/notice_rewrite_prompt.dart';
@@ -18,8 +21,13 @@ const _original = '''各位带班下午好，现有一则关于"挑战杯"赛事
 请各位带班及时转发到新生群，收到请回复，谢谢[玫瑰][玫瑰]''';
 
 Future<void> main() async {
-  stdout.write('Key 形态：${deepSeekApiKey().substring(0, 3)}…（长度 ${deepSeekApiKey().length}）\n');
+  final apiKey = Platform.environment['DEEPSEEK_API_KEY'];
+  if (apiKey == null || apiKey.trim().isEmpty) {
+    stderr.write('缺少环境变量 DEEPSEEK_API_KEY，无法调用接口。\n');
+    exit(2);
+  }
 
+  const config = AiSourceConfig(providerId: 'deepseek');
   final userMessage = buildUserMessage(
     sourceModeIndex: 2,
     source: '辅导员',
@@ -36,11 +44,15 @@ Future<void> main() async {
   stdout.write('===== 请求的用户消息 =====\n$userMessage\n');
   stdout.write('===== 模型输出 =====\n');
 
-  final client = DeepSeekClient();
+  final client = DeepSeekClient(
+    apiKey: apiKey.trim(),
+    endpoint: config.chatUrl,
+    sendThinkingParam: config.supportsThinking,
+  );
   final buffer = StringBuffer();
   final sw = Stopwatch()..start();
   await for (final delta in client.streamChat(
-    model: kDefaultModelId,
+    model: config.model.isEmpty ? 'deepseek-flash' : config.model,
     systemPrompt: kNoticeSystemPrompt,
     userMessage: userMessage,
   )) {

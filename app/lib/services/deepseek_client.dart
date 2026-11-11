@@ -1,7 +1,7 @@
 /// OpenAI 兼容格式的流式对话客户端。
 ///
-/// 内置来源走 DeepSeek 官方接口；自行配置时可以换成任意 OpenAI 兼容服务
-/// （只换 endpoint / Key / 模型名，请求体格式不变）。
+/// 使用用户在「模型来源」里自己配置的服务
+/// （endpoint / Key / 模型名都来自配置，请求体格式不变）。
 ///
 /// 用 `HttpClient` 直接读 SSE，不引第三方 HTTP 库，理由有二：
 /// 1. `dart:io` 自带，配 `HttpClient.close(force: true)` 就能真的中断请求；
@@ -12,7 +12,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../core/ai_credentials.dart';
 import '../models/ai_source.dart';
 
 /// 一次 AI 调用失败。
@@ -38,13 +37,11 @@ const Duration _kTestTimeout = Duration(seconds: 30);
 /// OpenAI 兼容的流式对话。
 class DeepSeekClient {
   DeepSeekClient({
-    String? apiKey,
-    String? endpoint,
-    this._sendThinkingParam = true,
+    required this._apiKey,
+    required this._endpoint,
+    this._sendThinkingParam = false,
     Duration? connectTimeout,
-  })  : _apiKey = apiKey ?? deepSeekApiKey(),
-        _endpoint = endpoint ?? kDeepSeekEndpoint,
-        _connectTimeout = connectTimeout ?? const Duration(seconds: 20);
+  }) : _connectTimeout = connectTimeout ?? const Duration(seconds: 20);
 
   /// 按当前「模型来源」配置构造客户端。
   factory DeepSeekClient.fromConfig(
@@ -61,7 +58,7 @@ class DeepSeekClient {
   final String _apiKey;
   final String _endpoint;
 
-  /// 只有 DeepSeek 官方认识 `thinking` 字段，第三方服务一律不发。
+  /// 只有 DeepSeek 官方认识 `thinking` 字段，其它服务一律不发。
   final bool _sendThinkingParam;
   final Duration _connectTimeout;
 

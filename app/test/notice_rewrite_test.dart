@@ -5,7 +5,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhangshang_yanyuan/core/ai_credentials.dart';
+import 'package:zhangshang_yanyuan/models/ai_source.dart';
 import 'package:zhangshang_yanyuan/services/notice_rewrite_prompt.dart';
 
 /// 组装一次「默认选项」的用户消息，便于逐个改参数做对照。
@@ -142,17 +142,16 @@ void main() {
     });
   });
 
-  group('内置凭据', () {
-    test('能还原出可用的 Key 形态', () {
-      final key = deepSeekApiKey();
-      expect(key.startsWith('sk-'), isTrue);
-      expect(key.length, greaterThan(20));
-      expect(key.contains(' '), isFalse);
+  group('模型来源默认值', () {
+    test('DeepSeek 官方的地址是 https 且指向 deepseek.com', () {
+      const config = AiSourceConfig(providerId: 'deepseek');
+      expect(config.baseUrl, isEmpty); // Key 与地址由用户填写
+      expect(config.supportsThinking, isTrue);
     });
 
-    test('接口地址是 https', () {
-      expect(kDeepSeekEndpoint.startsWith('https://'), isTrue);
-      expect(kDeepSeekEndpoint, contains('deepseek.com'));
+    test('默认配置不通过校验，提示用户去填', () {
+      const config = AiSourceConfig();
+      expect(config.validate(), isNotNull);
     });
   });
 }

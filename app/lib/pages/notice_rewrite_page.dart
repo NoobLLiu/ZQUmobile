@@ -7,8 +7,8 @@
 /// 这套规则与「班委通知转写」skill 完全一致（见 services/notice_rewrite_prompt.dart），
 /// 只是把原来跑在微信小程序里的一次性工具，搬进了天天会打开的 App。
 ///
-/// 模型来源在右上角「配置模型来源」里切换：作者提供的免费模型，
-/// 或用户自己的 OpenAI 兼容服务。
+/// 模型来源在右上角「配置模型来源」里设置：填自己的
+/// OpenAI 兼容服务（DeepSeek / GLM / Kimi / 小米 MiMo 或自定义）。
 library;
 
 import 'dart:async';
@@ -52,7 +52,7 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
   int _targetIndex = 2; // 默认「各位同学」
   int _deadlineModeIndex = 0; // 默认「不修改」
 
-  /// 当前模型来源配置；默认走作者提供的免费模型。
+  /// 当前模型来源配置；用户在配置页里填自己的厂商与 Key。
   AiSourceConfig _sourceConfig = const AiSourceConfig();
 
   bool _deepThinking = false;
@@ -92,13 +92,6 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
       MaterialPageRoute<bool>(builder: (_) => const AiSourcePage()),
     );
     if (saved == true) await _loadSourceConfig();
-  }
-
-  /// 免费来源下切换 Flash / Pro，顺手记下来，下次进来保持。
-  void _selectFreeModel(int index) {
-    final config = _sourceConfig.copyWith(freeModelIndex: index);
-    setState(() => _sourceConfig = config);
-    unawaited(AiSourceRepository.save(config));
   }
 
   /// 首次打开自动弹示例。
@@ -176,11 +169,9 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
 
   /// 提交前的校验，全在前端做完，避免白花一次额度。
   String? _validate() {
-    if (!_sourceConfig.isFree) {
-      final problem = _sourceConfig.validateCustom();
-      if (problem != null) {
-        return '模型来源配置不完整：$problem（右上角「配置模型来源」里修改）';
-      }
+    final problem = _sourceConfig.validate();
+    if (problem != null) {
+      return '模型来源配置不完整：$problem（右上角「配置模型来源」里修改）';
     }
     if (_originalController.text.trim().isEmpty) return '请先粘贴原通知';
     if (kSourceModes[_sourceModeIndex].key == 'custom' &&
@@ -235,7 +226,7 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
         model: _sourceConfig.effectiveModel,
         systemPrompt: kNoticeSystemPrompt,
         userMessage: userMessage,
-        deepThinking: _sourceConfig.supportsThinking && _deepThinking,
+        deepThinking: _deepThinking,
       )) {
         acc += delta;
         final now = DateTime.now().millisecondsSinceEpoch;
@@ -494,16 +485,13 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
     );
   }
 
-  int get _freeModelIndex =>
-      _sourceConfig.freeModelIndex.clamp(0, kAiModels.length - 1);
-
   /// 「AI 模型来源」入口条：放在「原通知」上方，整行可点，进入二级配置页。
   Widget _buildSourceEntry(ThemeData theme) {
     final scheme = theme.colorScheme;
-    final free = _sourceConfig.isFree;
-    final detail = free
-        ? '免费模型（作者提供） · ${_sourceConfig.effectiveModel}'
-        : '自行配置 · ${_sourceConfig.providerName} · ${_sourceConfig.effectiveModel}';
+    final model = _sourceConfig.effectiveModel;
+    final detail = _sourceConfig.validate() == null
+        ? '${_sourceConfig.providerName} · $model'
+        : '尚未配置，点这里填厂商、Base URL 与 API Key';
     return Card(
       color: scheme.surfaceContainerLow,
       clipBehavior: Clip.antiAlias,
@@ -521,7 +509,7 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  free ? Icons.card_giftcard_outlined : Icons.tune_outlined,
+                  Icons.tune_outlined,
                   size: 22,
                   color: scheme.primary,
                 ),
@@ -643,15 +631,8 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
           ],
 
           _FieldLabel('AI 模型'),
-          if (_sourceConfig.isFree) ...[
-            const SizedBox(height: 4),
-            _ChipRow<int>(
-              values: [for (var i = 0; i < kAiModels.length; i++) i],
-              selected: _freeModelIndex,
-              labelOf: (i) => kAiModels[i].label,
-              onSelected: _generating ? null : _selectFreeModel,
-            ),
-            _Hint(kAiModels[_freeModelIndex].hint),
+          _Hint('当前模型：${_sourceConfig.effectiveModel}（在上方「AI 模型来源」里配置）。'),
+          if (_sourceConfig.supportsThinking)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Row(
@@ -681,8 +662,6 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
                 ],
               ),
             ),
-          ] else
-            _Hint('当前模型：${_sourceConfig.effectiveModel}（在上方「AI 模型来源」里配置）。'),
         ],
       ),
     );
@@ -806,8 +785,9 @@ class _NoticeRewritePageState extends State<NoticeRewritePage> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '作品提交阶段默认使用作者提供的免费模型，方便演示时打开即用；'
-              '也可以在右上角「配置模型来源」里换成自己的厂商和 API Key。',
+              '模型走你自己的 API：在右上角「配置模型来源」里选厂商'
+              '（DeepSeek / GLM / Kimi / 小米 MiMo）并填入 API Key，'
+              'Key 只保存在本机。',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.outline, height: 1.6),
             ),

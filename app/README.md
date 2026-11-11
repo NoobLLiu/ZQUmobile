@@ -109,21 +109,19 @@
 
 ### 关于 API Key
 
-> **作品提交阶段，为了方便演示，这里直接使用了参赛组自己的 API Key，
-> 正常情况下会让用户填自己的 API Key。**
+模型走用户自己的账号：在「我的 → 模型来源」（或通知转写页右上角）里
+选厂商并填入 API Key，支持 DeepSeek 官方、智谱 GLM、月之暗面 Kimi、
+小米 MiMo（按量计费 / TokenPlan 两个通道），也可以选「自定义」接入任何
+OpenAI 兼容服务。
 
-这个功能最初是微信小程序（`notice-rewrite-mp`），当时靠 WorkBuddy 云服务的
-免密钥大模型通道跑；那条通道只在小程序运行时内可用（服务端按来源精确校验），
-且原环境已失效，搬到原生 App 里复用它不成立，所以改为直连 DeepSeek 官方接口。
+**App 不内置任何 API Key**：早期参赛版本曾内置演示用 Key
+（掩码存储于 `lib/core/ai_credentials.dart`），现已整体移除，
+所有请求都用用户自己填写的 Key，Key 只保存在本机。
 
-Key 不写明文：`lib/core/ai_credentials.dart` 里按掩码异或成字节表，运行时还原，
-界面上任何地方都不展示、也不提供查看入口。要换成用户自填只需改这一个文件 +
-页脚的说明文案。
-
-联调脚本（会真实调用接口、消耗额度）：
+联调脚本（会真实调用接口、消耗额度，Key 从环境变量读取）：
 
 ```bash
-cd app && dart run tool/smoke_notice.dart
+cd app && DEEPSEEK_API_KEY=sk-xxx dart run tool/smoke_notice.dart
 ```
 
 它会把拼好的用户消息、模型输出、以及「标题行是否顶格 / 缩进是否合规 / 是否残留转发字样」
@@ -180,7 +178,6 @@ app/
 ├── lib/
 │   ├── main.dart                 # App 根 + 底部导航外壳
 │   ├── core/grid_style.dart      # 网格样式常量与拾光配色板
-│   ├── core/ai_credentials.dart  # 内置 DeepSeek 凭据（掩码存储，界面不展示）
 │   ├── models/timetable.dart     # 课程 / 节次 / 课表模型
 │   ├── services/
 │   │   ├── jwgl_service.dart     # 桥接通道消息解析（进度 / 课程 / 配置 / 作息 / 完成）

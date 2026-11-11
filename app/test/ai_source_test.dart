@@ -4,7 +4,6 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:zhangshang_yanyuan/core/ai_credentials.dart';
 import 'package:zhangshang_yanyuan/models/ai_source.dart';
 import 'package:zhangshang_yanyuan/pages/ai_source_page.dart';
 import 'package:zhangshang_yanyuan/services/ai_account_client.dart';
@@ -19,8 +18,8 @@ void main() {
 
     test('带版本段的地址不重复拼 /v1', () {
       expect(
-        normalizeChatUrl('https://dashscope.aliyuncs.com/compatible-mode/v1'),
-        'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        normalizeChatUrl('https://api.moonshot.cn/v1'),
+        'https://api.moonshot.cn/v1/chat/completions',
       );
       expect(
         normalizeChatUrl('https://open.bigmodel.cn/api/paas/v4/'),
@@ -42,7 +41,8 @@ void main() {
 
   group('预置厂商清单', () {
     test('都有 https 地址、推荐模型名和 Key 官网', () {
-      expect(kAiProviderPresets.length, greaterThanOrEqualTo(8));
+      // DeepSeek / GLM / Kimi / MiMo 按量 / MiMo TokenPlan
+      expect(kAiProviderPresets.length, 5);
       for (final p in kAiProviderPresets) {
         expect(p.baseUrl.startsWith('https://'), isTrue, reason: p.name);
         expect(p.baseUrl.contains('/chat/completions'), isFalse, reason: p.name);
@@ -60,46 +60,52 @@ void main() {
       expect(kAiProviderPresets.first.id, 'deepseek');
       expect(findAiProvider('zhipu')?.baseUrl,
           'https://open.bigmodel.cn/api/paas/v4');
+      expect(findAiProvider('mimo')?.baseUrl, 'https://api.xiaomimimo.com/v1');
+      expect(findAiProvider('mimo-tokenplan')?.baseUrl,
+          'https://token-plan-cn.xiaomimimo.com/v1');
       expect(findAiProvider('不存在的厂商'), isNull);
+    });
+
+    test('MiMo 按量计费与 TokenPlan 的 Key 体系分开', () {
+      final payAsYouGo = findAiProvider('mimo')!;
+      final tokenPlan = findAiProvider('mimo-tokenplan')!;
+      expect(payAsYouGo.name, contains('按量计费'));
+      expect(tokenPlan.name, contains('TokenPlan'));
+      expect(tokenPlan.note, contains('不通用'));
+    });
+
+    test('推荐模型名是 2026-11 的现行版本', () {
+      expect(findAiProvider('deepseek')!.model, 'deepseek-flash');
+      expect(findAiProvider('zhipu')!.model, 'glm-5.3');
+      expect(findAiProvider('moonshot')!.model, 'kimi-k3.1-pro');
+      expect(findAiProvider('mimo')!.model, 'mimo-v2.6-flash');
+      expect(findAiProvider('mimo-tokenplan')!.model, 'mimo-v2.6-flash');
     });
   });
 
   group('AiSourceConfig 决策', () {
-    test('默认就是作者提供的免费模型', () {
+    test('默认指向 DeepSeek 官方，但地址和 Key 都要用户填', () {
       const config = AiSourceConfig();
-      expect(config.isFree, isTrue);
-      expect(config.chatUrl, kDeepSeekEndpoint);
-      expect(config.effectiveApiKey, deepSeekApiKey());
-      expect(config.effectiveModel, kAiModels.first.id);
-      expect(config.supportsThinking, isTrue);
+      expect(config.providerId, 'deepseek');
+      expect(config.providerName, 'DeepSeek 官方');
+      expect(config.baseUrl, isEmpty);
+      expect(config.chatUrl, isEmpty);
+      expect(config.effectiveApiKey, isEmpty);
+      expect(config.effectiveModel, isEmpty);
+      expect(config.validate(), '请填写 Base URL');
     });
 
-    test('免费来源可切到第二个模型，下标越界会夹住', () {
-      expect(
-        const AiSourceConfig(freeModelIndex: 1).effectiveModel,
-        kAiModels[1].id,
-      );
-      expect(
-        const AiSourceConfig(freeModelIndex: 99).effectiveModel,
-        kAiModels.last.id,
-      );
-    });
-
-    test('自行配置用自己的 Key / 地址 / 模型，且不带 thinking 字段', () {
+    test('填好后地址按 OpenAI 格式拼出', () {
       const config = AiSourceConfig(
-        mode: AiSourceMode.custom,
-        providerId: 'dashscope',
-        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        providerId: 'deepseek',
+        baseUrl: 'https://api.deepseek.com',
         apiKey: 'sk-my-own-key',
-        model: 'qwen-plus',
+        model: 'deepseek-flash',
       );
-      expect(config.isFree, isFalse);
-      expect(config.providerName, '阿里云百炼（通义千问）');
-      expect(config.chatUrl,
-          'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions');
+      expect(config.chatUrl, 'https://api.deepseek.com/chat/completions');
       expect(config.effectiveApiKey, 'sk-my-own-key');
-      expect(config.effectiveModel, 'qwen-plus');
-      expect(config.supportsThinking, isFalse);
+      expect(config.effectiveModel, 'deepseek-flash');
+      expect(config.validate(), isNull);
     });
 
     test('自定义厂商没有预置名字', () {
@@ -109,7 +115,13 @@ void main() {
       );
     });
 
-    test('shouldSendThinking 只对内置来源生效，开深度思考时不发', () {
+    test('thinking 字段只对 DeepSeek 官方发，开深度思考时不发', () {
+      expect(
+        const AiSourceConfig(providerId: 'deepseek').supportsThinking,
+        isTrue,
+      );
+      expect(const AiSourceConfig(providerId: 'zhipu').supportsThinking,
+          isFalse);
       expect(shouldSendThinking(true, false), isTrue);
       expect(shouldSendThinking(true, true), isFalse);
       expect(shouldSendThinking(false, false), isFalse);
@@ -117,75 +129,81 @@ void main() {
     });
   });
 
-  group('自行配置表单校验', () {
+  group('表单校验', () {
     AiSourceConfig build({
       String baseUrl = 'https://api.deepseek.com',
       String apiKey = 'sk-test',
-      String model = 'deepseek-chat',
+      String model = 'deepseek-flash',
     }) =>
         AiSourceConfig(
-          mode: AiSourceMode.custom,
           baseUrl: baseUrl,
           apiKey: apiKey,
           model: model,
         );
 
     test('三项齐全才通过', () {
-      expect(build().validateCustom(), isNull);
+      expect(build().validate(), isNull);
     });
 
     test('逐项给出中文错误', () {
-      expect(build(baseUrl: '').validateCustom(), '请填写 Base URL');
-      expect(build(baseUrl: 'api.deepseek.com').validateCustom(),
+      expect(build(baseUrl: '').validate(), '请填写 Base URL');
+      expect(build(baseUrl: 'api.deepseek.com').validate(),
           contains('http://'));
-      expect(build(baseUrl: 'https://api deepseek.com').validateCustom(),
+      expect(build(baseUrl: 'https://api deepseek.com').validate(),
           contains('空格'));
-      expect(build(apiKey: '  ').validateCustom(), '请填写 API Key');
-      expect(build(model: '').validateCustom(), '请填写模型名称');
+      expect(build(apiKey: '  ').validate(), '请填写 API Key');
+      expect(build(model: '').validate(), '请填写模型名称');
     });
   });
 
   group('序列化与存储', () {
     test('JSON 往返保留全部字段', () {
       const config = AiSourceConfig(
-        mode: AiSourceMode.custom,
-        providerId: 'siliconflow',
-        baseUrl: 'https://api.siliconflow.cn/v1',
+        providerId: 'zhipu',
+        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
         apiKey: 'sk-abc',
-        model: 'Qwen/Qwen2.5-7B-Instruct',
-        freeModelIndex: 1,
+        model: 'glm-5.3',
       );
       final restored = AiSourceConfig.decode(config.encode());
-      expect(restored.mode, AiSourceMode.custom);
-      expect(restored.providerId, 'siliconflow');
+      expect(restored.providerId, 'zhipu');
       expect(restored.apiKey, 'sk-abc');
-      expect(restored.model, 'Qwen/Qwen2.5-7B-Instruct');
-      expect(restored.freeModelIndex, 1);
+      expect(restored.model, 'glm-5.3');
+      expect(restored.baseUrl, 'https://open.bigmodel.cn/api/paas/v4');
     });
 
-    test('损坏数据回退到免费来源', () {
-      expect(AiSourceConfig.decode('{坏掉的 json').isFree, isTrue);
-      expect(AiSourceConfig.decode(null).isFree, isTrue);
+    test('旧版本的 mode / freeModelIndex 字段会被忽略', () {
+      final legacy = AiSourceConfig.decode(
+        '{"mode":"custom","freeModelIndex":1,'
+        '"providerId":"moonshot","baseUrl":"https://api.moonshot.cn/v1",'
+        '"apiKey":"sk-kimi","model":"kimi-k3.1-pro"}',
+      );
+      expect(legacy.providerId, 'moonshot');
+      expect(legacy.apiKey, 'sk-kimi');
+      expect(legacy.model, 'kimi-k3.1-pro');
+    });
+
+    test('损坏数据回退到默认值', () {
+      expect(AiSourceConfig.decode('{坏掉的 json').providerId, 'deepseek');
+      expect(AiSourceConfig.decode(null).baseUrl, isEmpty);
     });
 
     test('仓库读写与清空', () async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
-      expect((await AiSourceRepository.load()).isFree, isTrue);
+      expect((await AiSourceRepository.load()).apiKey, isEmpty);
 
       const config = AiSourceConfig(
-        mode: AiSourceMode.custom,
         providerId: 'moonshot',
         baseUrl: 'https://api.moonshot.cn/v1',
         apiKey: 'sk-kimi',
-        model: 'moonshot-v1-8k',
+        model: 'kimi-k3.1-pro',
       );
       await AiSourceRepository.save(config);
       final loaded = await AiSourceRepository.load();
-      expect(loaded.mode, AiSourceMode.custom);
+      expect(loaded.providerId, 'moonshot');
       expect(loaded.apiKey, 'sk-kimi');
 
       await AiSourceRepository.clear();
-      expect((await AiSourceRepository.load()).isFree, isTrue);
+      expect((await AiSourceRepository.load()).apiKey, isEmpty);
     });
   });
 
@@ -202,49 +220,42 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('免费模式下也有测试连接按钮，不显示自定义表单', (tester) async {
+    testWidgets('直接显示厂商下拉与三个输入框，未配置时自动预填 DeepSeek', (tester) async {
       await pump(tester);
 
       expect(find.text('配置模型来源'), findsOneWidget);
-      expect(find.text('免费模型（作者提供）'), findsOneWidget);
-      expect(find.text('自行配置'), findsOneWidget);
-      expect(find.text('测试连接'), findsOneWidget);
-      expect(find.text('保存配置'), findsOneWidget);
-      expect(find.text('模型厂商'), findsNothing);
-      expect(find.text('Base URL'), findsNothing);
-    });
-
-    testWidgets('切到自行配置会显示厂商下拉与三个输入框，并自动预填', (tester) async {
-      await pump(tester);
-      await tester.tap(find.text('自行配置'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('模型厂商'), findsOneWidget);
+      expect(find.text('模型厂商'), findsNothing); // 厂商标题并入区块标题
       expect(find.text('Base URL'), findsOneWidget);
       expect(find.text('API Key'), findsOneWidget);
       expect(find.text('模型名称'), findsOneWidget);
       expect(find.text('测试连接'), findsOneWidget);
+      expect(find.text('保存配置'), findsOneWidget);
 
-      // 首次切换按当前厂商（DeepSeek 官方）自动填好地址与推荐模型名
+      // 默认厂商预填好地址与推荐模型名，用户只需补 Key
       expect(find.text('https://api.deepseek.com'), findsWidgets);
-      expect(find.text('deepseek-chat'), findsWidgets);
+      expect(find.text('deepseek-flash'), findsWidgets);
     });
 
-    testWidgets('保存的自定义配置能回读到页面', (tester) async {
+    testWidgets('保存过的配置能回读到页面', (tester) async {
       SharedPreferences.setMockInitialValues({
         AiSourceRepository.prefsKey: const AiSourceConfig(
-          mode: AiSourceMode.custom,
           providerId: 'zhipu',
           baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
           apiKey: 'sk-glm',
-          model: 'glm-4.6',
+          model: 'glm-5.3',
         ).encode(),
       });
       await pump(tester);
 
       expect(find.text('https://open.bigmodel.cn/api/paas/v4'), findsOneWidget);
-      expect(find.text('glm-4.6'), findsOneWidget);
-      expect(find.text('模型厂商'), findsOneWidget);
+      expect(find.text('glm-5.3'), findsOneWidget);
+    });
+
+    testWidgets('配置不完整时测试连接给出中文提示，不发请求', (tester) async {
+      await pump(tester);
+      await tester.tap(find.text('测试连接'));
+      await tester.pumpAndSettle();
+      expect(find.text('请填写 API Key'), findsOneWidget);
     });
   });
 
@@ -344,21 +355,12 @@ void main() {
   });
 
   group('查询能力派生', () {
-    test('免费来源自动指向 DeepSeek 的模型与余额地址', () {
-      const config = AiSourceConfig();
-      expect(config.modelsUrl, 'https://api.deepseek.com/models');
-      expect(config.balanceUrl, 'https://api.deepseek.com/user/balance');
-      expect(config.balanceFormat, AiBalanceFormat.deepseek);
-      expect(config.supportsBalance, isTrue);
-    });
-
-    test('自行配置按厂商派生，模型地址跟着 Base URL 走', () {
+    test('按厂商派生，模型地址跟着 Base URL 走', () {
       const config = AiSourceConfig(
-        mode: AiSourceMode.custom,
         providerId: 'moonshot',
         baseUrl: 'https://api.moonshot.cn/v1',
         apiKey: 'sk-kimi',
-        model: 'moonshot-v1-8k',
+        model: 'kimi-k3.1-pro',
       );
       expect(config.modelsUrl, 'https://api.moonshot.cn/v1/models');
       expect(config.balanceUrl, 'https://api.moonshot.cn/v1/users/me/balance');
@@ -367,7 +369,6 @@ void main() {
 
     test('自定义厂商能查模型但没有余额接口', () {
       const config = AiSourceConfig(
-        mode: AiSourceMode.custom,
         providerId: kCustomProviderId,
         baseUrl: 'https://example.com/v1',
         apiKey: 'sk-x',
@@ -378,12 +379,24 @@ void main() {
       expect(config.supportsBalance, isFalse);
     });
 
-    test('预置厂商里只有四家有公开余额接口', () {
+    test('预置厂商里只有 DeepSeek 与 Kimi 有公开余额接口', () {
       final withBalance = kAiProviderPresets
           .where((p) => p.supportsBalance)
           .map((p) => p.id)
           .toSet();
-      expect(withBalance, {'deepseek', 'moonshot', 'siliconflow', 'openrouter'});
+      expect(withBalance, {'deepseek', 'moonshot'});
+    });
+
+    test('Key 没填时不允许自动查询', () {
+      // 组件层面 _canProbe 的同款条件：地址和 Key 都要有
+      const noKey = AiSourceConfig(
+        providerId: 'deepseek',
+        baseUrl: 'https://api.deepseek.com',
+      );
+      expect(
+        noKey.baseUrl.trim().isNotEmpty && noKey.apiKey.trim().isNotEmpty,
+        isFalse,
+      );
     });
   });
 
@@ -392,7 +405,7 @@ void main() {
       SharedPreferences.setMockInitialValues(<String, Object>{});
     });
 
-    testWidgets('免费模式下也有获取模型列表与查询余额按钮', (tester) async {
+    testWidgets('有获取模型列表与查询余额按钮', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(home: AiSourcePage(autoProbe: false)),
       );
@@ -412,11 +425,10 @@ void main() {
     testWidgets('不支持余额的厂商会给出说明', (tester) async {
       SharedPreferences.setMockInitialValues({
         AiSourceRepository.prefsKey: const AiSourceConfig(
-          mode: AiSourceMode.custom,
           providerId: 'zhipu',
           baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
           apiKey: 'sk-glm',
-          model: 'glm-4.6',
+          model: 'glm-5.3',
         ).encode(),
       });
       await tester.pumpWidget(

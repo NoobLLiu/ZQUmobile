@@ -1,41 +1,11 @@
 /// 通知转写的模型来源配置。
 ///
-/// 两种来源：
-/// 1. 免费模型（作者提供）—— 沿用内置 Key 的 DeepSeek 官方接口；
-/// 2. 自行配置 —— 用户填自己的 OpenAI 兼容服务（Base URL / API Key / 模型名）。
-///
-/// 预置厂商清单参考 CC Switch 的「Provider Preset」：选中后自动填好地址，
-/// 只需要补一个 Key。所有厂商都走 OpenAI 格式的 `/chat/completions`。
+/// 用户填自己的 OpenAI 兼容服务（Base URL / API Key / 模型名），
+/// 预置厂商清单选中后自动填好地址与参考模型名，只需要补一个 Key。
+/// 所有厂商都走 OpenAI 格式的 `/chat/completions`。
 library;
 
 import 'dart:convert';
-
-import '../core/ai_credentials.dart';
-
-/// 一个可选的模型（免费来源下用）。
-class AiModelOption {
-  const AiModelOption(this.id, this.label, this.hint);
-
-  final String id;
-  final String label;
-  final String hint;
-}
-
-/// 作者提供的免费模型：够用就好，不把整个目录摊给用户。
-const List<AiModelOption> kAiModels = [
-  AiModelOption('deepseek-flash', 'DeepSeek V4.1 Flash', '默认，速度快，日常通知够用'),
-  AiModelOption('deepseek-v4-pro', 'DeepSeek V4 Pro', '更稳，长通知 / 复杂补充要求时用'),
-];
-
-const String kDefaultModelId = 'deepseek-flash';
-
-/// 模型来源。
-enum AiSourceMode {
-  free,
-  custom;
-
-  bool get isFree => this == AiSourceMode.free;
-}
 
 /// 余额接口的返回格式。各家字段名不一样，只能按厂商分别解析。
 enum AiBalanceFormat {
@@ -84,7 +54,7 @@ class AiProviderPreset {
   /// 申请 API Key 的官网。
   final String keySite;
 
-  /// 补充提示（例如豆包要填接入点 ID）。
+  /// 补充提示（例如两套 Key 不能混用）。
   final String note;
 
   /// 余额查询的完整地址；null 表示官方没有提供公开接口。
@@ -93,98 +63,61 @@ class AiProviderPreset {
   /// 余额返回体的解析方式。
   final AiBalanceFormat balanceFormat;
 
-  /// 余额相关的补充说明（例如 OpenRouter 要 management key）。
+  /// 余额相关的补充说明。
   final String balanceHint;
 
   /// 是否支持查询余额。
   bool get supportsBalance => balanceUrl != null && balanceFormat != AiBalanceFormat.none;
 }
 
-/// 常用厂商。最后一个选项是「自定义」，由界面单独追加。
+/// 预置厂商（2026-11 按各家官网最新信息核对）。最后一个选项是
+/// 「自定义」，由界面单独追加。
 const List<AiProviderPreset> kAiProviderPresets = [
   AiProviderPreset(
     id: 'deepseek',
     name: 'DeepSeek 官方',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
     keySite: 'platform.deepseek.com',
-    note: '也支持 https://api.deepseek.com/v1',
+    note: '也支持 https://api.deepseek.com/v1；'
+        '长文 / 复杂任务可改用 deepseek-v4-pro',
     balanceUrl: 'https://api.deepseek.com/user/balance',
     balanceFormat: AiBalanceFormat.deepseek,
-  ),
-  AiProviderPreset(
-    id: 'dashscope',
-    name: '阿里云百炼（通义千问）',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    model: 'qwen-plus',
-    keySite: 'bailian.console.aliyun.com',
-    note: '必须带 /compatible-mode/v1',
   ),
   AiProviderPreset(
     id: 'zhipu',
     name: '智谱 GLM',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    model: 'glm-4.6',
+    model: 'glm-5.3',
     keySite: 'open.bigmodel.cn',
+    note: '追求速度可改用轻量版 glm-5.3-flash',
   ),
   AiProviderPreset(
     id: 'moonshot',
     name: '月之暗面 Kimi',
     baseUrl: 'https://api.moonshot.cn/v1',
-    model: 'moonshot-v1-8k',
-    keySite: 'platform.moonshot.cn',
+    model: 'kimi-k3.1-pro',
+    keySite: 'platform.kimi.com',
+    note: '高速版 kimi-k3.1-pro-highspeed；上一代 kimi-k3（K2 系列已下线）',
     balanceUrl: 'https://api.moonshot.cn/v1/users/me/balance',
     balanceFormat: AiBalanceFormat.moonshot,
   ),
   AiProviderPreset(
-    id: 'siliconflow',
-    name: '硅基流动 SiliconFlow',
-    baseUrl: 'https://api.siliconflow.cn/v1',
-    model: 'Qwen/Qwen2.5-7B-Instruct',
-    keySite: 'cloud.siliconflow.cn',
-    note: '聚合多家模型，有免费额度，模型名要写完整路径',
-    balanceUrl: 'https://api.siliconflow.cn/v1/user/info',
-    balanceFormat: AiBalanceFormat.siliconflow,
+    id: 'mimo',
+    name: '小米 MiMo（按量计费）',
+    baseUrl: 'https://api.xiaomimimo.com/v1',
+    model: 'mimo-v2.6-flash',
+    keySite: 'platform.xiaomimimo.com',
+    note: 'Key 为 sk- 开头；旗舰 mimo-v2.6-pro，另有 mimo-v2.6-pro-ultraspeed',
   ),
   AiProviderPreset(
-    id: 'volcengine',
-    name: '火山方舟（豆包）',
-    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-    model: 'ep-2024xxxxxx-xxxxx',
-    keySite: 'console.volcengine.com/ark',
-    note: '模型名填推理接入点 ID（ep- 开头），不是模型名',
-  ),
-  AiProviderPreset(
-    id: 'minimax',
-    name: 'MiniMax',
-    baseUrl: 'https://api.minimaxi.com/v1',
-    model: 'MiniMax-M2',
-    keySite: 'platform.minimaxi.com',
-  ),
-  AiProviderPreset(
-    id: 'hunyuan',
-    name: '腾讯混元',
-    baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
-    model: 'hunyuan-turbo',
-    keySite: 'cloud.tencent.com/product/hunyuan',
-  ),
-  AiProviderPreset(
-    id: 'openrouter',
-    name: 'OpenRouter',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    model: 'openai/gpt-4o-mini',
-    keySite: 'openrouter.ai/keys',
-    note: '聚合平台，模型名要带厂商前缀',
-    balanceUrl: 'https://openrouter.ai/api/v1/credits',
-    balanceFormat: AiBalanceFormat.openrouter,
-    balanceHint: '额度接口需要 management key，普通 Key 可能返回 403',
-  ),
-  AiProviderPreset(
-    id: 'openai',
-    name: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini',
-    keySite: 'platform.openai.com/api-keys',
+    id: 'mimo-tokenplan',
+    name: '小米 MiMo TokenPlan',
+    baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
+    model: 'mimo-v2.6-flash',
+    keySite: 'platform.xiaomimimo.com（TokenPlan 管理页）',
+    note: 'Key 为 tp- 开头，与按量计费的 Key 不通用；'
+        '国内集群地址，另有新加坡 token-plan-sgp / 欧洲 token-plan-ams',
   ),
 ];
 
@@ -212,22 +145,18 @@ String normalizeChatUrl(String raw) {
 
 /// 是否要发送 DeepSeek 专属的 `thinking` 字段。
 ///
-/// 只有内置免费来源支持；第三方 OpenAI 兼容服务收到这个字段可能直接 400。
+/// 只有 DeepSeek 官方认识这个字段；其它 OpenAI 兼容服务收到可能直接 400。
 bool shouldSendThinking(bool supportsThinking, bool deepThinking) =>
     supportsThinking && !deepThinking;
 
 /// 一份来源配置。
 class AiSourceConfig {
   const AiSourceConfig({
-    this.mode = AiSourceMode.free,
     this.providerId = 'deepseek',
     this.baseUrl = '',
     this.apiKey = '',
     this.model = '',
-    this.freeModelIndex = 0,
   });
-
-  final AiSourceMode mode;
 
   /// 当前选中的厂商 id；`custom` 表示列表最后的「自定义」。
   final String providerId;
@@ -236,11 +165,6 @@ class AiSourceConfig {
   final String apiKey;
   final String model;
 
-  /// 免费来源下选中的模型下标。
-  final int freeModelIndex;
-
-  bool get isFree => mode == AiSourceMode.free;
-
   bool get isCustomPreset => providerId == kCustomProviderId;
 
   /// 展示用的厂商名。
@@ -248,8 +172,7 @@ class AiSourceConfig {
       findAiProvider(providerId)?.name ?? '自定义服务';
 
   /// 实际请求的地址。
-  String get chatUrl =>
-      isFree ? kDeepSeekEndpoint : normalizeChatUrl(baseUrl);
+  String get chatUrl => normalizeChatUrl(baseUrl);
 
   /// OpenAI 标准的模型列表地址：把 `/chat/completions` 换成 `/models`。
   String get modelsUrl {
@@ -262,43 +185,28 @@ class AiSourceConfig {
   }
 
   /// 余额查询地址；null 表示这个厂商没有公开接口。
-  String? get balanceUrl {
-    if (isFree) return 'https://api.deepseek.com/user/balance';
-    return findAiProvider(providerId)?.balanceUrl;
-  }
+  String? get balanceUrl => findAiProvider(providerId)?.balanceUrl;
 
-  AiBalanceFormat get balanceFormat {
-    if (isFree) return AiBalanceFormat.deepseek;
-    return findAiProvider(providerId)?.balanceFormat ?? AiBalanceFormat.none;
-  }
+  AiBalanceFormat get balanceFormat =>
+      findAiProvider(providerId)?.balanceFormat ?? AiBalanceFormat.none;
 
-  /// 余额说明（如 OpenRouter 要 management key）。
-  String get balanceHint {
-    if (isFree) return '';
-    return findAiProvider(providerId)?.balanceHint ?? '';
-  }
+  /// 余额说明。
+  String get balanceHint => findAiProvider(providerId)?.balanceHint ?? '';
 
   bool get supportsBalance =>
       balanceUrl != null && balanceFormat != AiBalanceFormat.none;
 
-  /// 实际使用的 Key（免费来源取内置 Key）。
-  String get effectiveApiKey =>
-      isFree ? deepSeekApiKey() : apiKey.trim();
+  /// 实际使用的 Key。
+  String get effectiveApiKey => apiKey.trim();
 
   /// 实际使用的模型名。
-  String get effectiveModel {
-    if (isFree) {
-      final i = freeModelIndex.clamp(0, kAiModels.length - 1);
-      return kAiModels[i].id;
-    }
-    return model.trim();
-  }
+  String get effectiveModel => model.trim();
 
-  /// 是否支持 `thinking` 字段（仅内置来源）。
-  bool get supportsThinking => isFree;
+  /// 是否支持 `thinking` 字段（仅 DeepSeek 官方）。
+  bool get supportsThinking => providerId == 'deepseek';
 
-  /// 自行配置时的表单校验，返回可直接展示的中文错误；通过返回 null。
-  String? validateCustom() {
+  /// 表单校验，返回可直接展示的中文错误；通过返回 null。
+  String? validate() {
     final url = baseUrl.trim();
     if (url.isEmpty) return '请填写 Base URL';
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -311,43 +219,33 @@ class AiSourceConfig {
   }
 
   AiSourceConfig copyWith({
-    AiSourceMode? mode,
     String? providerId,
     String? baseUrl,
     String? apiKey,
     String? model,
-    int? freeModelIndex,
   }) {
     return AiSourceConfig(
-      mode: mode ?? this.mode,
       providerId: providerId ?? this.providerId,
       baseUrl: baseUrl ?? this.baseUrl,
       apiKey: apiKey ?? this.apiKey,
       model: model ?? this.model,
-      freeModelIndex: freeModelIndex ?? this.freeModelIndex,
     );
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'mode': mode.name,
         'providerId': providerId,
         'baseUrl': baseUrl,
         'apiKey': apiKey,
         'model': model,
-        'freeModelIndex': freeModelIndex,
       };
 
   factory AiSourceConfig.fromJson(Map<String, dynamic> json) {
-    final modeName = json['mode'];
+    // 旧版本存过 mode / freeModelIndex，读进来直接忽略。
     return AiSourceConfig(
-      mode: modeName == AiSourceMode.custom.name
-          ? AiSourceMode.custom
-          : AiSourceMode.free,
       providerId: (json['providerId'] as String?) ?? 'deepseek',
       baseUrl: (json['baseUrl'] as String?) ?? '',
       apiKey: (json['apiKey'] as String?) ?? '',
       model: (json['model'] as String?) ?? '',
-      freeModelIndex: (json['freeModelIndex'] as int?) ?? 0,
     );
   }
 

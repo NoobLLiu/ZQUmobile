@@ -134,6 +134,16 @@ void main() {
   });
 
   testWidgets('通知转写未粘贴原文时不发起请求', (WidgetTester tester) async {
+    // 来源已配置完整，才能验证到「先粘原文」这一步
+    SharedPreferences.setMockInitialValues({
+      'zsy_notice_guide_seen': true,
+      AiSourceRepository.prefsKey: const AiSourceConfig(
+        providerId: 'deepseek',
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: 'sk-test',
+        model: 'deepseek-flash',
+      ).encode(),
+    });
     await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
 
     final button = find.text('开始转写');
@@ -152,13 +162,12 @@ void main() {
   });
 
   testWidgets('AI 模型来源条目能进入配置页并可返回', (WidgetTester tester) async {
-    // 自定义来源但没填 Key：配置页的自动查询不会发起真实请求
+    // 有地址但没填 Key：配置页的自动查询不会发起真实请求
     SharedPreferences.setMockInitialValues({
       'zsy_profile': _completeProfile,
       'zsy_notice_guide_seen': true,
       'zsy_utility_cache': _utilityCache(),
       AiSourceRepository.prefsKey: const AiSourceConfig(
-        mode: AiSourceMode.custom,
         providerId: 'deepseek',
         baseUrl: 'https://api.deepseek.com',
         apiKey: '',
@@ -180,10 +189,10 @@ void main() {
     expect(find.text('AI 模型来源'), findsOneWidget);
   });
 
-  testWidgets('通知转写给出演示期用 Key 的说明', (WidgetTester tester) async {
+  testWidgets('通知转写页脚提示配置自己的模型来源', (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
 
-    final notice = find.textContaining('作品提交阶段');
+    final notice = find.textContaining('配置模型来源');
     await tester.dragUntilVisible(
       notice,
       find.byType(ListView),
@@ -447,13 +456,12 @@ void main() {
   });
 
   testWidgets('设置页的模型来源与通知转写页是同一个配置页', (WidgetTester tester) async {
-    // 自定义来源但没填 Key：配置页的自动查询不会发起真实请求
+    // 有地址但没填 Key：配置页的自动查询不会发起真实请求
     SharedPreferences.setMockInitialValues({
       'zsy_profile': _completeProfile,
       'zsy_notice_guide_seen': true,
       'zsy_utility_cache': _utilityCache(),
       AiSourceRepository.prefsKey: const AiSourceConfig(
-        mode: AiSourceMode.custom,
         providerId: 'deepseek',
         baseUrl: 'https://api.deepseek.com',
         apiKey: '',
