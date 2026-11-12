@@ -1,6 +1,6 @@
 /// 掌上砚园 —— 肇庆学院校园助手。
 ///
-/// 主框架：底部导航「看板」「功能页」「设置」，
+/// 主框架：底部导航「看板」「功能」「设置」，
 /// 看板为默认首页，汇聚今日课程与生活数据。
 library;
 
@@ -89,7 +89,7 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
   }
 }
 
-/// 底部导航外壳：看板 / 功能页 / 设置。
+/// 底部导航外壳：看板 / 功能 / 设置。
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
@@ -176,7 +176,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
           NavigationDestination(
             icon: Icon(Icons.widgets_outlined),
             selectedIcon: Icon(Icons.widgets),
-            label: '功能页',
+            label: '功能',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),

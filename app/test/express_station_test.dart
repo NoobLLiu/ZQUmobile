@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zhangshang_yanyuan/main.dart';
 import 'package:zhangshang_yanyuan/models/express_station.dart';
 import 'package:zhangshang_yanyuan/pages/express_station_page.dart';
+import 'package:zhangshang_yanyuan/services/express_station_repository.dart';
 
 /// 2026-10-28 是周三，2026-10-30 是周五。
 DateTime _at(int day, int hour, [int minute = 0]) =>
@@ -21,6 +22,18 @@ ExpressStationGroup _group(String name) => kExpressStationGroups
     .firstWhere((g) => g.name == name);
 
 void main() {
+  // 页面测试用不出网、不读 asset 的仓库，避免 fake async 下卡在平台通道。
+  setUp(() {
+    ExpressStationRepository.autoFetch = false;
+    ExpressStationRepository.instance =
+        ExpressStationRepository(loadAsset: false);
+  });
+
+  tearDown(() {
+    ExpressStationRepository.autoFetch = true;
+    ExpressStationRepository.instance = ExpressStationRepository();
+  });
+
   group('TimeRange', () {
     test('解析与格式化互逆', () {
       final range = TimeRange.hhmm('07:00', '23:00');
@@ -350,8 +363,8 @@ void main() {
       await tester.pumpWidget(const ZhangShangZhaoYuanApp());
       await tester.pumpAndSettle();
 
-      // 默认在「看板」，先切到「功能页」
-      await tester.tap(find.text('功能页'));
+      // 默认在「看板」，先切到「功能」
+      await tester.tap(find.text('功能'));
       await tester.pumpAndSettle();
 
       // 宫格第 3 行在首屏之下，分两次拖动滚到位

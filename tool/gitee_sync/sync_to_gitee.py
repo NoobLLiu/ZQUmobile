@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""掌上砚园：把 GitHub latest Release 一键同步到 Gitee 国内镜像。
+"""掌上砚园：把 GitHub latest Release 与快递站数据一键同步到 Gitee。
 
-双击同目录的「一键同步到Gitee.bat」即可运行。
-只用 Python 标准库 + Windows 自带的 curl.exe，不装任何依赖。
+双击同目录的「一键同步到Gitee.bat」即可运行（Release + 数据）；
+只想更新快递站数据时双击「仅同步快递站数据.bat」，或命令行加 --data-only。
+也可用 GITEE_TOKEN 环境变量提供令牌（CI 用），无需本机配置文件。
+只用 Python 标准库 + 系统自带的 curl，不装任何依赖。
 """
 
+import base64
 import hashlib
 import json
 import os
@@ -39,6 +42,17 @@ GITEE_BASE = f"https://gitee.com/{OWNER}/{REPO}/releases/download/{TAG}"
 RELEASE_PAGE = f"https://gitee.com/{OWNER}/{REPO}/releases/tag/{TAG}"
 UPSTREAM = f"https://github.com/{GITHUB_REPO}/releases/tag/{TAG}"
 
+# 快递站数据：仓库里的普通文件，不放 Release 附件（改数据不需要重建 Release）。
+GITEE_BRANCH = "master"
+DATA_REL_PATH = "data/express_stations.json"
+DATA_LOCAL_PATH = os.path.normpath(
+    os.path.join(BASE_DIR, "..", "..", DATA_REL_PATH)
+)
+GITEE_CONTENTS = f"{API}/contents/{DATA_REL_PATH}"
+GITEE_DATA_RAW = (
+    f"https://gitee.com/{OWNER}/{REPO}/raw/{GITEE_BRANCH}/{DATA_REL_PATH}"
+)
+
 
 def log(msg=""):
     print(msg, flush=True)
@@ -60,6 +74,107 @@ def api(args, timeout=180):
         detail = (done.stderr or done.stdout or "").strip()[:300]
         raise RuntimeError(f"请求 Gitee 失败：{detail}")
     return done.stdout
+
+
+def api_with_status(args, timeout=180):
+    """同 api()，但保留 HTTP 状态码（404 也算正常结果，用来判断文件是否存在）。"""
+    cmd = [curl_path(), "-sS", "--show-error", "--max-time", str(timeout),
+           "-w", "\n__ZSY_HTTP_STATUS__%{http_code}"] + args
+    done = subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    if done.returncode:
+        detail = (done.stderr or done.stdout or "").strip()[:300]
+        raise RuntimeError(f"请求 Gitee 失败：{detail}")
+    body, sep, status = done.stdout.rpartition("__ZSY_HTTP_STATUS__")
+    if not sep:
+        raise RuntimeError("读取 Gitee 响应状态码失败")
+    return int(status.strip()), body
+
+
+def _normalize_bytes(raw):
+    """忽略 CRLF / 末尾空行差异，避免 Gitee 存储格式变化导致每次都重写。"""
+    return raw.replace(b"\r\n", b"\n").strip()
+
+
+def sync_data_file(token):
+    """把仓库根的快递站 JSON 同步到 Gitee 仓库同路径；内容相同则跳过。
+
+    走 Gitee Contents API 建/改文件，不碰 Release：数据改一次即可生效，
+    不用删建 latest、不用重传 3 个 APK。返回是否真的写入了。
+    """
+    if not os.path.isfile(DATA_LOCAL_PATH):
+        raise RuntimeError(f"找不到快递站数据文件：{DATA_LOCAL_PATH}")
+    with open(DATA_LOCAL_PATH, "rb") as f:
+        local = f.read()
+    try:
+        parsed = json.loads(local.decode("utf-8"))
+        revision = parsed["revision"]
+        if not isinstance(parsed.get("groups"), list) or not parsed["groups"]:
+            raise ValueError("groups 为空")
+    except Exception as exc:
+        raise RuntimeError(f"快递站数据不是合法的数据包：{exc}")
+
+    # 顺手提醒：出厂初始包是不是也跟着更新了（CI 会重新生成，本机靠 flutter test 兜底）。
+    bundled_path = os.path.normpath(
+        os.path.join(BASE_DIR, "..", "..", "app", "assets", "express_stations.json")
+    )
+    if os.path.isfile(bundled_path):
+        with open(bundled_path, "rb") as f:
+            bundled = f.read()
+        if _normalize_bytes(bundled) != _normalize_bytes(local):
+            log("  [提醒] app/assets/express_stations.json 与数据源不一致，")
+            log("         请运行 dart tool/gen_express_stations.dart 更新出厂包（CI 会自动跑）。")
+
+    status, body = api_with_status(
+        [f"{GITEE_CONTENTS}?access_token={token}&ref={GITEE_BRANCH}"]
+    )
+    remote = None
+    if status == 404:
+        pass
+    elif 200 <= status < 300:
+        # Gitee 对不存在的路径返回 200 + []（空数组），而不是 404。
+        try:
+            decoded = json.loads(body)
+        except Exception:
+            decoded = None
+        remote = decoded if isinstance(decoded, dict) else None
+    else:
+        raise RuntimeError(
+            f"读取 Gitee 数据文件失败（HTTP {status}）：{body[:200]}"
+        )
+
+    verb = "POST"
+    extra = []
+    if remote is not None:
+        try:
+            remote_bytes = base64.b64decode(remote.get("content", ""))
+        except Exception:
+            remote_bytes = b""
+        if _normalize_bytes(remote_bytes) == _normalize_bytes(local):
+            log(f"  快递站数据已是最新（r{revision}），无需同步")
+            return False
+        verb = "PUT"
+        sha = remote.get("sha", "")
+        if not sha:
+            raise RuntimeError("Gitee 返回的数据文件缺少 sha，无法更新")
+        extra = ["--data-urlencode", f"sha={sha}"]
+
+    # 统一按 LF 上传，避免 Windows 的 CRLF 把 Gitee 文件反复改写成另一种行尾。
+    payload = base64.b64encode(local.replace(b"\r\n", b"\n")).decode("ascii")
+    status, body = api_with_status(
+        ["-X", verb, GITEE_CONTENTS,
+         "--data-urlencode", f"access_token={token}",
+         "--data-urlencode", f"content={payload}",
+         "--data-urlencode", f"message=chore(data): sync express stations r{revision}",
+         "--data-urlencode", f"branch={GITEE_BRANCH}"] + extra
+    )
+    if not 200 <= status < 300:
+        raise RuntimeError(
+            f"写入 Gitee 数据文件失败（HTTP {status}）：{body[:300]}"
+        )
+    log(f"  已{'更新' if verb == 'PUT' else '创建'} Gitee 数据文件（r{revision}）")
+    log(f"  App 热更新地址：{GITEE_DATA_RAW}")
+    return True
 
 
 def http_get_json(url):
@@ -128,6 +243,10 @@ def upload(token, rid, path, name):
 
 
 def load_token():
+    # CI 里没有本机配置文件，直接用环境变量注入的令牌。
+    env_token = os.environ.get("GITEE_TOKEN", "").strip()
+    if env_token:
+        return env_token
     if os.path.isfile(CONFIG_PATH):
         with open(CONFIG_PATH, encoding="utf-8") as f:
             token = json.load(f).get("gitee_token", "").strip()
@@ -146,13 +265,27 @@ def load_token():
 
 def main():
     started = time.time()
+    data_only = "--data-only" in sys.argv[1:]
     log("=" * 58)
-    log("  掌上砚园 · GitHub Release -> Gitee 一键同步")
+    log("  掌上砚园 · 同步到 Gitee" +
+        ("（仅快递站数据）" if data_only else "（Release + 快递站数据）"))
     log("=" * 58)
     curl_path()
     token = load_token()
 
-    log("\n[1/5] 读取 GitHub 版本清单")
+    # 快递站数据放仓库文件，独立于 Release；幂等，内容没变就跳过。
+    log("\n[1/1] 同步快递站数据到 Gitee 仓库" if data_only
+        else "\n[1/6] 同步快递站数据到 Gitee 仓库")
+    sync_data_file(token)
+    if data_only:
+        log("\n" + "=" * 58)
+        log(f"  数据同步完成，用时 {time.time() - started:.1f} 秒")
+        log("=" * 58)
+        log(f"  热更新地址：{GITEE_DATA_RAW}")
+        log("  Release 未改动（数据只写仓库文件）。\n")
+        return
+
+    log("\n[2/6] 读取 GitHub 版本清单")
     release_info = http_get_json(f"{GH_API}/releases/tags/{TAG}")
     asset_ids = {a["name"]: a["id"] for a in release_info.get("assets", [])}
     if "version.json" not in asset_ids:
@@ -167,7 +300,7 @@ def main():
     full = meta["fullVersion"]
     log(f"  版本 {full}（versionCode {meta['versionCode']}，{meta['buildTime']}）")
 
-    log("\n[2/5] 下载安装包（已有且 sha256 一致则跳过）")
+    log("\n[3/6] 下载安装包（已有且 sha256 一致则跳过）")
     for a in apks:
         if a["name"] not in asset_ids:
             raise RuntimeError(f"GitHub Release 里缺少 {a['name']}")
@@ -175,7 +308,7 @@ def main():
                        os.path.join(CACHE_DIR, a["name"]),
                        sha=a.get("sha256"))
 
-    log("\n[3/5] 生成 Gitee 版 version.json")
+    log("\n[4/6] 生成 Gitee 版 version.json")
     gitee_meta = json.loads(json.dumps(meta))
     for a in gitee_meta.get("assets", []):
         a["upstreamUrl"] = a["url"]
@@ -204,7 +337,7 @@ def main():
         f"> 本仓库只镜像安装包与版本信息，不含源码。上游：{UPSTREAM}\n"
     )
 
-    log("\n[4/5] 重建 Gitee latest Release")
+    log("\n[5/6] 重建 Gitee latest Release")
     releases = json.loads(api([f"{API}/releases?access_token={token}&per_page=100"]))
     for rel in releases:
         if rel.get("tag_name") == TAG:
@@ -222,7 +355,7 @@ def main():
     rid = created["id"]
     log(f"  已创建：{title}（id {rid}）")
 
-    log("\n[5/5] 上传附件")
+    log("\n[6/6] 上传附件")
     upload(token, rid, gitee_meta_path, "version.json")
     for a in apks:
         upload(token, rid, os.path.join(CACHE_DIR, a["name"]), a["name"])

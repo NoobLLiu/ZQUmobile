@@ -52,10 +52,10 @@ void main() {
   testWidgets('应用能启动并显示底部导航', (WidgetTester tester) async {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
-    // 底部导航应有三个目的地：看板 / 功能页 / 设置
+    // 底部导航应有三个目的地：看板 / 功能 / 设置
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.text('看板'), findsOneWidget);
-    expect(find.text('功能页'), findsOneWidget);
+    expect(find.text('功能'), findsOneWidget);
     expect(find.text('设置'), findsOneWidget);
   });
 
@@ -63,8 +63,8 @@ void main() {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
     await tester.pumpAndSettle();
 
-    // 默认在「看板」，先切到「功能页」
-    await tester.tap(find.text('功能页'));
+    // 默认在「看板」，先切到「功能」
+    await tester.tap(find.text('功能'));
     await tester.pumpAndSettle();
 
     // 可见的标题只有功能页的（看板页同名标题在 IndexedStack 里处于 offstage，
@@ -118,7 +118,7 @@ void main() {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('功能页'));
+    await tester.tap(find.text('功能'));
     await tester.pumpAndSettle();
 
     // 宫格第二行默认在首屏之外，先滚一点

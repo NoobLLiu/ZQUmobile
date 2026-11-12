@@ -1,6 +1,11 @@
 name: Sync Release to Gitee
 
 on:
+  # 快递站数据一改动就立刻推到 Gitee 仓库，不必等 APK 构建完成。
+  push:
+    branches: [main]
+    paths:
+      - 'data/express_stations.json'
   # 主链路：CI 在 main 上构建并刷新 GitHub latest 之后自动同步。
   workflow_run:
     workflows: ["CI"]
@@ -17,6 +22,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 数据同步不传大文件，不需要国内出口代理，因此跟 Release 同步拆成两个 job。
+  # 改一个 JSON 就生效：只写仓库文件，不动 latest Release、不重传 APK。
+  sync-data:
+    name: 同步快递站数据到 Gitee 仓库
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 同步 data/express_stations.json
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "::warning::未配置 GITEE_TOKEN，跳过快递站数据同步"
+            exit 0
+          fi
+          python3 tool/gitee_sync/sync_to_gitee.py --data-only
+
   sync:
     name: 同步 Release 到 Gitee
     if: >

@@ -3,6 +3,10 @@
 /// 按校门分组展示各驿站的实时营业状态：
 ///   - 绿：营业中；黄：距打烊 / 距开门不足 30 分钟；红：未营业 / 校门已关不可达；灰：数据待补充
 /// 分组默认展开，点分组栏的小箭头可折叠；状态随系统时间每 30 秒自动刷新。
+///
+/// 页面里的**全部内容**（分组、驿站名称、位置、营业时间、备注、底部说明）
+/// 都来自 `data/express_stations.json`：出厂时编译进包，进页后由
+/// [ExpressStationRepository] 从 Gitee 仓库静默热更新，失败自动回退本地数据。
 library;
 
 import 'dart:async';
@@ -10,13 +14,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/express_station.dart';
+import '../services/express_station_repository.dart';
 
 /// 快递站状态页。
 class ExpressStationPage extends StatefulWidget {
-  const ExpressStationPage({super.key, this.clock});
+  const ExpressStationPage({super.key, this.clock, this.repository});
 
   /// 当前时间来源，测试时可注入固定时间。
   final DateTime Function()? clock;
+
+  /// 数据仓库，测试时可注入不发网络的实例。
+  final ExpressStationRepository? repository;
 
   @override
   State<ExpressStationPage> createState() => _ExpressStationPageState();
@@ -24,13 +32,17 @@ class ExpressStationPage extends StatefulWidget {
 
 class _ExpressStationPageState extends State<ExpressStationPage> {
   late DateTime _now;
+  late ExpressStationData _data;
+  ExpressStationSource _source = ExpressStationSource.bundled;
+  bool _updating = false;
 
-  /// 各分组是否展开（默认全展开）。
-  final Map<String, bool> _expanded = {
-    for (final g in kExpressStationGroups) g.name: true,
-  };
+  /// 各分组是否展开（默认全展开；新增分组也默认展开）。
+  final Map<String, bool> _expanded = {};
 
   Timer? _timer;
+
+  ExpressStationRepository get _repo =>
+      widget.repository ?? ExpressStationRepository.instance;
 
   DateTime _clock() => (widget.clock ?? DateTime.now)();
 
@@ -38,9 +50,15 @@ class _ExpressStationPageState extends State<ExpressStationPage> {
   void initState() {
     super.initState();
     _now = _clock();
+    // 首帧直接用出厂内置快照，不等网络；随后静默替换成缓存/在线数据。
+    _data = _repo.bundled;
+    for (final g in _data.groups) {
+      _expanded[g.name] = true;
+    }
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() => _now = _clock());
     });
+    unawaited(_load());
   }
 
   @override
@@ -49,7 +67,50 @@ class _ExpressStationPageState extends State<ExpressStationPage> {
     super.dispose();
   }
 
+  Future<void> _load({bool forceRefresh = false}) async {
+    try {
+      final result = await _repo.load(forceRefresh: forceRefresh);
+      if (!mounted) return;
+      setState(() {
+        _data = result.data;
+        _source = result.source;
+      });
+    } catch (_) {
+      // 任何异常都保留首帧的出厂数据，页面不空、不报错。
+    }
+  }
+
   void _refreshNow() => setState(() => _now = _clock());
+
+  /// AppBar 的「更新数据」按钮：强制联网拉一次，并给出结果提示。
+  Future<void> _updateData() async {
+    if (_updating) return;
+    setState(() => _updating = true);
+    ExpressStationLoadResult? result;
+    try {
+      result = await _repo.load(forceRefresh: true);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      if (result != null) {
+        _data = result.data;
+        _source = result.source;
+      }
+      _now = _clock();
+      _updating = false;
+    });
+    String message;
+    if (result == null || result.error != null) {
+      message = '在线更新失败，已显示本地数据';
+    } else if (result.gotUpdate) {
+      message = '快递站数据已更新到 r${result.data.revision}';
+    } else {
+      message = '已是最新数据（r${result.data.revision}）';
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -63,6 +124,17 @@ class _ExpressStationPageState extends State<ExpressStationPage> {
             onPressed: _refreshNow,
             icon: const Icon(Icons.refresh),
           ),
+          IconButton(
+            tooltip: '更新快递站数据',
+            onPressed: _updating ? null : _updateData,
+            icon: _updating
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.cloud_download_outlined),
+          ),
         ],
       ),
       body: ListView(
@@ -70,25 +142,57 @@ class _ExpressStationPageState extends State<ExpressStationPage> {
         children: [
           const _LegendBar(),
           const SizedBox(height: 12),
-          for (final group in kExpressStationGroups) ...[
+          for (final group in _data.groups) ...[
             _GroupSection(
               group: group,
               now: _now,
               expanded: _expanded[group.name] ?? true,
               onToggle: () => setState(
-                () => _expanded[group.name] = !(_expanded[group.name] ?? true),
+                () => _expanded[group.name] =
+                    !(_expanded[group.name] ?? true),
               ),
+              onStationTap: (station) => _showDetails(group, station),
             ),
             const SizedBox(height: 12),
           ],
           Text(
-            '此模块时间仅作功能演示，部分内容待修正，部分数据待补充。',
+            _data.notice,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.outline,
             ),
           ),
+          const SizedBox(height: 4),
+          Text(
+            '数据 r${_data.revision} · ${_data.updatedAt} · ${_sourceLabel(_source)}',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.outline,
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  String _sourceLabel(ExpressStationSource source) => switch (source) {
+        ExpressStationSource.bundled => '出厂内置',
+        ExpressStationSource.cache => '本地缓存',
+        ExpressStationSource.remote => '在线更新',
+      };
+
+  /// 点卡片看完整信息：位置、营业时间、备注等都可以随 JSON 热更新。
+  void _showDetails(ExpressStationGroup group, ExpressStation station) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => _StationDetailSheet(
+        group: group,
+        station: station,
+        now: _now,
+        revision: _data.revision,
+        updatedAt: _data.updatedAt,
       ),
     );
   }
@@ -160,12 +264,14 @@ class _GroupSection extends StatelessWidget {
     required this.now,
     required this.expanded,
     required this.onToggle,
+    required this.onStationTap,
   });
 
   final ExpressStationGroup group;
   final DateTime now;
   final bool expanded;
   final VoidCallback onToggle;
+  final void Function(ExpressStation station) onStationTap;
 
   @override
   Widget build(BuildContext context) {
@@ -228,6 +334,7 @@ class _GroupSection extends StatelessWidget {
                   children: [
                     for (final station in group.stations)
                       _StationCard(
+                        group: group,
                         station: station,
                         now: now,
                         result: evaluateExpressStation(
@@ -235,6 +342,7 @@ class _GroupSection extends StatelessWidget {
                           now,
                           gateHours: group.gateHours,
                         ),
+                        onTap: () => onStationTap(station),
                       ),
                   ],
                 )
@@ -254,18 +362,29 @@ const Color _kGrayBase = Color(0xFF9AA1AC);
 /// 单个驿站卡片。
 class _StationCard extends StatelessWidget {
   const _StationCard({
+    required this.group,
     required this.station,
     required this.now,
     required this.result,
+    required this.onTap,
   });
 
+  final ExpressStationGroup group;
   final ExpressStation station;
   final DateTime now;
   final ExpressStatusResult result;
+  final VoidCallback onTap;
 
   /// 今日是否有按星期的特殊时间（有则展示「今日 xx-xx」）。
   bool get _hasOverride =>
       station.weekdayHours.containsKey(now.weekday) && station.hasData;
+
+  /// 是否有位置或备注可展开查看。
+  bool get _hasDetails =>
+      station.location.isNotEmpty ||
+      station.note.isNotEmpty ||
+      group.location.isNotEmpty ||
+      group.note.isNotEmpty;
 
   Color get _baseColor => switch (result.status) {
         ExpressStatus.open => _kGreenBase,
@@ -337,45 +456,173 @@ class _StationCard extends StatelessWidget {
     final textColor = _textColor(theme.brightness);
     final base = _baseColor;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: base.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: base.withValues(alpha: 0.5), width: 1.2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            station.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.bold,
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: base.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: base.withValues(alpha: 0.5), width: 1.2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    station.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                if (_hasDetails)
+                  Icon(
+                    Icons.info_outline,
+                    size: 14,
+                    color: theme.colorScheme.outline,
+                  ),
+              ],
             ),
-          ),
-          const Spacer(),
-          Text(
-            _statusLabel,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: textColor,
-              fontWeight: FontWeight.bold,
+            const Spacer(),
+            Text(
+              _statusLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: textColor,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            _hoursLabel,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline,
+            const SizedBox(height: 3),
+            Text(
+              _hoursLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
+
+/// 卡片详情：位置、营业时间、按星期特例、备注等完整信息。
+class _StationDetailSheet extends StatelessWidget {
+  const _StationDetailSheet({
+    required this.group,
+    required this.station,
+    required this.now,
+    required this.revision,
+    required this.updatedAt,
+  });
+
+  final ExpressStationGroup group;
+  final ExpressStation station;
+  final DateTime now;
+  final int revision;
+  final String updatedAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final result = evaluateExpressStation(
+      station,
+      now,
+      gateHours: group.gateHours,
+    );
+    final rows = <MapEntry<String, String>>[
+      MapEntry('所属分组', group.name),
+      if (group.location.isNotEmpty) MapEntry('分组位置', group.location),
+      if (station.location.isNotEmpty) MapEntry('具体位置', station.location),
+      MapEntry(
+        '营业时间',
+        result.hours?.format() ?? '待补充',
+      ),
+      if (station.weekdayHours.isNotEmpty)
+        MapEntry(
+          '特殊安排',
+          [
+            for (final e in station.weekdayHours.entries)
+              '周${_weekdayName(e.key)} ${e.value.format()}',
+          ].join('；'),
+        ),
+      if (group.gateHours != null)
+        MapEntry('校门开放', group.gateHours!.format()),
+      if (station.note.isNotEmpty) MapEntry('备注', station.note),
+      if (group.note.isNotEmpty) MapEntry('分组提示', group.note),
+    ];
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                station.name,
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 14),
+              for (final row in rows)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 72,
+                        child: Text(
+                          row.key,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.outline,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          row.value.isEmpty ? '待补充' : row.value,
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 4),
+              Text(
+                '数据 r$revision · $updatedAt（可在「更新快递站数据」中刷新）',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const List<String> _weekdayNames = <String>[
+  '',
+  '一',
+  '二',
+  '三',
+  '四',
+  '五',
+  '六',
+  '日',
+];
+
+String _weekdayName(int weekday) =>
+    weekday >= 1 && weekday <= 7 ? _weekdayNames[weekday] : '$weekday';

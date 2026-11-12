@@ -14,8 +14,8 @@
 
 ### 导航结构
 
-底部导航为 **功能页** / **我的**，各功能模块从功能页进入。
-功能页按「学习功能（我的课表、教务系统）/ 班委工作（通知转写）/ 校园生活（水电余额、快递站状态）」分组，
+底部导航为 **看板** / **功能** / **设置**，默认停在「看板」，各功能模块从「功能」进入。
+「功能」按「学习功能（我的课表、教务系统）/ 班委工作（通知转写）/ 校园生活（水电余额、快递站状态）」分组，
 顶部只保留「掌上砚园」标题。
 功能页的「教务系统」只做登录，**导入课表需进入「我的课表」后点击重新同步**。
 
@@ -140,6 +140,37 @@ flutter test
 ```
 > Windows 上若设置了 `http_proxy` / `https_proxy`，跑 `flutter test` 需额外设置
 > `NO_PROXY=localhost,127.0.0.1`，否则 `flutter_tester` 的本地 WebSocket 握手会被代理拦截。
+
+## 快递站数据热更新
+
+「快递站状态」页的全部内容（分组、位置、名称、营业时间、备注、底部说明）
+都放在仓库根的 **`data/express_stations.json`**，代码里不再硬编码。
+
+**为什么放仓库文件、不放 Release 附件**：这份数据的改动频率远高于发版，
+而 Gitee 的 `latest` Release 是整删整建、还挂着 3 个约 19 MB 的 APK；
+为了改一行营业时间就重建 Release 并重传安装包不划算。仓库文件改完即生效、
+有提交历史可回溯，匿名 raw 直链可直接被 App 读取；`version.json` 仍留在
+Release 里只负责 APK 版本更新，两者互不干扰。
+
+三条链路：
+
+1. **出厂初始包**：`dart tool/gen_express_stations.dart` 把数据源写成
+   `app/assets/express_stations.json` 与 `lib/generated/express_stations_bundled.dart`
+   （两者内容一致，均提交入库）。CI 每次编译前会重跑一遍，
+   所以新装用户拿到的安装包里一定带最新数据。
+2. **运行时热更新**：App 进页先显示出厂数据，随后静默拉取
+   `https://gitee.com/NoobLLiu/ZQUmobile/raw/master/data/express_stations.json`，
+   失败退到 GitHub raw，再失败退本地缓存；`revision` 更高才覆盖并写入
+   `SharedPreferences`（6 小时内不重复请求）。AppBar 的云下载按钮可强制刷新。
+3. **同步到 Gitee**：推 `data/express_stations.json` 到 `main` 后，
+   `sync-gitee.yml` 会立即用 Contents API 把该文件写到 Gitee 仓库同路径；
+   本机也可以双击 `tool/gitee_sync/仅同步快递站数据.bat`（只传几 KB，
+   不动 Release），或双击 `一键同步到Gitee.bat`（数据 + Release 一起同步）。
+   内容没变时脚本会直接跳过，是幂等的。
+
+改数据只需编辑 `data/express_stations.json`，**把 `revision` 加 1、更新
+`updatedAt`**，其余字段留空表示「待补充」。本机改完跑一次生成脚本再提交，
+即可保证出厂包与线上数据一致。
 
 ## 构建 APK（推荐走 CI）
 

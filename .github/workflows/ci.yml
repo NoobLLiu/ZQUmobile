@@ -42,6 +42,26 @@ jobs:
           channel: stable
           cache: true
 
+      # 快递站数据：唯一源 data/express_stations.json -> assets 初始包 + 编译期内置快照。
+      # 每次编译都重新生成，保证新装用户拿到的是最新数据；生成物同时提交在仓库里，
+      # 所以本机 analyze/test 不依赖这一步也能跑。生成脚本只用 dart:io，无需 pub get。
+      - name: Sync express station data
+        shell: bash
+        run: |
+          DART="$(command -v dart || true)"
+          if [ -z "$DART" ]; then
+            # 兜底：直接指向 flutter 自带的 dart-sdk（windows-latest 的 bash 可能
+            # 没把 dart 加进 PATH，但 flutter 一定在）。
+            FLUTTER_BIN="$(command -v flutter || true)"
+            if [ -z "$FLUTTER_BIN" ]; then
+              echo "::error::找不到 dart / flutter，无法生成快递站出厂数据"
+              exit 1
+            fi
+            DART="$(dirname "$FLUTTER_BIN")/cache/dart-sdk/bin/dart"
+          fi
+          "$DART" ../tool/gen_express_stations.dart
+          "$DART" ../tool/gen_express_stations.dart --check
+
       # 双保险：关掉 Kotlin 增量编译，避免跨盘根缓存问题
       - name: Disable Kotlin incremental compilation
         run: Add-Content -Path android/gradle.properties -Value "`nkotlin.incremental=false"
