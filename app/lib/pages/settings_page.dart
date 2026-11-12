@@ -11,6 +11,7 @@ import 'clear_timetable_page.dart';
 import 'profile_page.dart';
 import 'term_page.dart';
 import 'utility_alert_page.dart';
+import '../widgets/app_bar_title.dart';
 
 /// 设置页。
 class SettingsPage extends StatelessWidget {
@@ -19,7 +20,7 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('设置')),
+      appBar: AppBar(title: const AppBarBrandTitle('设置')),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [

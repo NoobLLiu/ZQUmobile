@@ -3,6 +3,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../widgets/app_bar_title.dart';
+
 /// 一个可从功能页进入的功能。
 class HomeFeature {
   const HomeFeature({
@@ -95,16 +97,7 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          '掌上砚园',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.5,
-          ),
-        ),
-      ),
+      appBar: AppBar(title: const AppBarBrandTitle('功能')),
       body: CustomScrollView(
         slivers: [
           for (final section in sections) ...[

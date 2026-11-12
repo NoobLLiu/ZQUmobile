@@ -16,6 +16,7 @@ import '../services/attachment_schedule_repository.dart';
 import '../services/profile_repository.dart';
 import '../services/timetable_repository.dart';
 import '../services/utility_provider.dart';
+import '../widgets/app_bar_title.dart';
 
 const List<String> _weekdayLabels = [
   '周一',
@@ -42,7 +43,20 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => DashboardPageState();
 }
 
-class DashboardPageState extends State<DashboardPage> {
+class DashboardPageState extends State<DashboardPage>
+    with SingleTickerProviderStateMixin {
+  /// 切日动画控制器。
+  late final AnimationController _dayCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 320),
+  );
+
+  /// 动画开始前所在的日期（用于绘制滑出的旧内容）。
+  DateTime? _prevSelected;
+
+  /// 最近一次切日的方向：+1 往后一天，-1 往前一天。
+  int _dayDir = 1;
+
   Timetable? _timetable;
 
   /// 附属日程（晚自习 / 阳光体育），按星期合并进 Today 列表。
@@ -69,6 +83,12 @@ class DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _dayCtrl.dispose();
+    super.dispose();
   }
 
   /// 重新加载课表与水电数据（切回看板 tab 时调用）。
@@ -156,7 +176,17 @@ class DashboardPageState extends State<DashboardPage> {
     if (start != null && end != null) {
       if (d.isBefore(start) || d.isAfter(end)) return;
     }
-    setState(() => _selected = d);
+    _animateDayTo(d, delta);
+  }
+
+  /// 切到目标日期并播放滑动动画，dir 为方向（+1 后一天 / -1 前一天）。
+  void _animateDayTo(DateTime d, int dir) {
+    setState(() {
+      _prevSelected = _selected;
+      _selected = d;
+      _dayDir = dir >= 0 ? 1 : -1;
+    });
+    _dayCtrl.forward(from: 0);
   }
 
   Future<void> _pickDate() async {
@@ -174,15 +204,17 @@ class DashboardPageState extends State<DashboardPage> {
       helpText: '选择本学期内的日期',
     );
     if (picked != null) {
-      setState(() => _selected = DateTime(picked.year, picked.month, picked.day));
+      final d = DateTime(picked.year, picked.month, picked.day);
+      _animateDayTo(d, d.isAfter(_selected) ? 1 : -1);
     }
   }
 
-  String get _titleText {
+  /// 顶部居中的日期文案。
+  String _headerLabel(DateTime date) {
     final label =
-        '${_selected.month}月${_selected.day}日 '
-        '${_weekdayLabels[_selected.weekday - 1]}';
-    return _isToday ? '今天 · $label' : label;
+        '${date.month}月${date.day}日 '
+        '${_weekdayLabels[date.weekday - 1]}';
+    return _sameDay(date, DateTime.now()) ? '今天 · $label' : label;
   }
 
   static bool _sameDay(DateTime a, DateTime b) =>
@@ -191,16 +223,7 @@ class DashboardPageState extends State<DashboardPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          '掌上砚园',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.5,
-          ),
-        ),
-      ),
+      appBar: AppBar(title: const AppBarBrandTitle('看板')),
       body: Column(
         children: [
           Expanded(
@@ -239,34 +262,93 @@ class DashboardPageState extends State<DashboardPage> {
         },
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
-              child: Row(
+            // 顶部一行：箭头贴卡片左右两侧，日期与周次居中（参与切日动画）
+            SizedBox(
+              height: 44,
+              child: Stack(
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.chevron_left),
-                    tooltip: '前一天',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => _shiftDay(-1),
-                  ),
-                  Expanded(
-                    child: Text(
-                      _titleText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
+                  Positioned.fill(
+                    child: Center(
+                      child: AnimatedBuilder(
+                        animation: _dayCtrl,
+                        builder: (context, _) => _dayLayer(
+                          current: _buildHeaderCenter(context, _selected),
+                          previous: _dayCtrl.isAnimating
+                              ? _buildHeaderCenter(
+                                  context,
+                                  _prevSelected ?? _selected,
+                                )
+                              : null,
+                        ),
                       ),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.chevron_right),
-                    tooltip: '后一天',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => _shiftDay(1),
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    child: IconButton(
+                      icon: const Icon(Icons.chevron_left),
+                      tooltip: '前一天',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _shiftDay(-1),
+                    ),
                   ),
-                  _buildWeekChip(context),
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    child: IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      tooltip: '后一天',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _shiftDay(1),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 课程列表（参与切日动画）
+            Expanded(
+              child: AnimatedBuilder(
+                animation: _dayCtrl,
+                builder: (context, _) => _dayLayer(
+                  current: _buildCourseList(context, _selected),
+                  previous: _dayCtrl.isAnimating
+                      ? _buildCourseList(context, _prevSelected ?? _selected)
+                      : null,
+                ),
+              ),
+            ),
+            // 底部一行：操作提示 + 回到今天 + 刷新 + 日历
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 6, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '左右滑动或点日历切换日期',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.outline,
+                      ),
+                    ),
+                  ),
+                  if (!_isToday)
+                    GestureDetector(
+                      onTap: () => _animateDayTo(
+                        _today(),
+                        _today().isAfter(_selected) ? 1 : -1,
+                      ),
+                      child: Text(
+                        '回到今天',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ),
+                  if (!_isToday) const SizedBox(width: 4),
                   IconButton(
                     tooltip: '刷新',
                     visualDensity: VisualDensity.compact,
@@ -288,43 +370,60 @@ class DashboardPageState extends State<DashboardPage> {
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '左右滑动或点日历切换日期',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: scheme.outline,
-                      ),
-                    ),
-                  ),
-                  if (!_isToday)
-                    GestureDetector(
-                      onTap: () => setState(() => _selected = _today()),
-                      child: Text(
-                        '回到今天',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: scheme.primary,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Expanded(child: _buildCourseList(context)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildWeekChip(BuildContext context) {
+  /// 顶行中央的日期 + 周次。
+  Widget _buildHeaderCenter(BuildContext context, DateTime date) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          _headerLabel(date),
+          maxLines: 1,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(width: 8),
+        _buildWeekChip(context, date),
+      ],
+    );
+  }
+
+  /// 切日动画层：旧内容向滑动方向平移、淡出、缩小；新内容从反方向
+  /// 滑入、淡入、放大回原大。easeOutCubic 缓动。
+  Widget _dayLayer({required Widget current, Widget? previous}) {
+    if (previous == null) return current;
+    final t = Curves.easeOutCubic.transform(_dayCtrl.value);
+    final dir = _dayDir.toDouble();
+    const slide = 56.0;
+    return Stack(
+      fit: StackFit.passthrough,
+      alignment: Alignment.center,
+      children: [
+        Opacity(
+          opacity: 1 - t,
+          child: Transform.translate(
+            offset: Offset(-dir * slide * t, 0),
+            child: Transform.scale(scale: 1 - 0.1 * t, child: previous),
+          ),
+        ),
+        Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(dir * slide * (1 - t), 0),
+            child: Transform.scale(scale: 0.9 + 0.1 * t, child: current),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWeekChip(BuildContext context, DateTime date) {
     final scheme = Theme.of(context).colorScheme;
-    final week = _timetable?.weekOf(_selected);
+    final week = _timetable?.weekOf(date);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
@@ -342,7 +441,8 @@ class DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildCourseList(BuildContext context) {
+  Widget _buildCourseList(BuildContext context, DateTime date) {
+    final isToday = _sameDay(date, _today());
     final tt = _timetable;
     if (tt == null) {
       return _emptyState(
@@ -358,11 +458,11 @@ class DashboardPageState extends State<DashboardPage> {
       );
     }
 
-    final week = tt.weekOf(_selected);
+    final week = tt.weekOf(date);
     if (week == null) {
       // 学期外没有课程周次，但附属日程仍按星期合并展示。
       final extras = _extras
-          .where((s) => s.enabled && s.occursOn(_selected.weekday))
+          .where((s) => s.enabled && s.occursOn(date.weekday))
           .toList();
       if (extras.isEmpty) {
         return _emptyState(
@@ -378,36 +478,36 @@ class DashboardPageState extends State<DashboardPage> {
         separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, i) => i == 0
             ? _buildExtrasHeader(context)
-            : _buildExtraRow(context, extras[i - 1]),
+            : _buildExtraRow(context, extras[i - 1], isToday),
       );
     }
 
     final slotMap = {for (final t in tt.timeSlots) t.number: t};
     final courses =
         tt.courses
-            .where((c) => c.day == _selected.weekday && c.weeks.contains(week))
+            .where((c) => c.day == date.weekday && c.weeks.contains(week))
             .toList()
           ..sort((a, b) => a.startSection.compareTo(b.startSection));
 
     // 附属日程按星期合并，不受教学周限制。
     final extras = _extras
-        .where((s) => s.enabled && s.occursOn(_selected.weekday))
+        .where((s) => s.enabled && s.occursOn(date.weekday))
         .toList();
 
     if (courses.isEmpty && extras.isEmpty) {
       return _emptyState(
         context,
         icon: Icons.nights_stay_outlined,
-        title: _isToday ? '今天没有课' : '这一天没有课',
-        sub: _isToday ? '好好休息，或者去图书馆自习吧' : '换个日子看看吧',
+        title: isToday ? '今天没有课' : '这一天没有课',
+        sub: isToday ? '好好休息，或者去图书馆自习吧' : '换个日子看看吧',
       );
     }
 
     final rows = <Widget>[
-      for (final c in courses) _buildCourseRow(context, c, slotMap),
+      for (final c in courses) _buildCourseRow(context, c, slotMap, isToday),
       if (extras.isNotEmpty) ...[
         _buildExtrasHeader(context),
-        for (final e in extras) _buildExtraRow(context, e),
+        for (final e in extras) _buildExtraRow(context, e, isToday),
       ],
     ];
 
@@ -443,7 +543,11 @@ class DashboardPageState extends State<DashboardPage> {
   }
 
   /// 附属日程行（配色与课程条区分，用主题色淡底）。
-  Widget _buildExtraRow(BuildContext context, AttachmentSchedule schedule) {
+  Widget _buildExtraRow(
+    BuildContext context,
+    AttachmentSchedule schedule,
+    bool isToday,
+  ) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     final base = schedule.type == AttachmentScheduleType.eveningStudy
@@ -454,7 +558,7 @@ class DashboardPageState extends State<DashboardPage> {
     final fgSub = scheme.onSurfaceVariant;
 
     final ongoing =
-        _isToday && _inProgress(schedule.start, schedule.end);
+        isToday && _inProgress(schedule.start, schedule.end);
     final sub = [
       schedule.weekdayLabel,
       if (schedule.location.isNotEmpty) schedule.location,
@@ -565,6 +669,7 @@ class DashboardPageState extends State<DashboardPage> {
     BuildContext context,
     Course course,
     Map<int, TimeSlot> slotMap,
+    bool isToday,
   ) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final index =
@@ -580,7 +685,7 @@ class DashboardPageState extends State<DashboardPage> {
         ? '第 ${course.startSection} 节'
         : '${course.startSection}-${course.endSection} 节';
 
-    final ongoing = _isToday && start.isNotEmpty && end.isNotEmpty && _inProgress(start, end);
+    final ongoing = isToday && start.isNotEmpty && end.isNotEmpty && _inProgress(start, end);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
