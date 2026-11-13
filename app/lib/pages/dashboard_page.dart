@@ -76,8 +76,9 @@ class DashboardPageState extends State<DashboardPage>
 
   DateTime _selected = _today();
 
-  /// Today 卡片上水平拖动的累计位移。
+  /// Today 卡片上拖动的累计位移（横向 / 纵向）。
   double _dragDx = 0;
+  double _dragDy = 0;
 
   @override
   void initState() {
@@ -247,24 +248,32 @@ class DashboardPageState extends State<DashboardPage>
         color: scheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: GestureDetector(
-        // 用位移累积而非速度判定：快速轻扫和慢拖都能切日
-        onHorizontalDragStart: (_) => _dragDx = 0,
-        onHorizontalDragUpdate: (details) => _dragDx += details.delta.dx,
-        onHorizontalDragEnd: (_) {
-          final dx = _dragDx;
+      child: Listener(
+        // 用原始指针位移累积判定，不参与手势竞技场：课程列表的滚动手势
+        // 不会抢走事件，有课/无课页面的判定完全一致。横向位移达阈值且
+        // 明显大于纵向时才切日，避免把竖向滚动误判成切日。
+        onPointerDown: (_) {
           _dragDx = 0;
-          if (dx < -60) {
-            _shiftDay(1);
-          } else if (dx > 60) {
-            _shiftDay(-1);
+          _dragDy = 0;
+        },
+        onPointerMove: (event) {
+          _dragDx += event.delta.dx;
+          _dragDy += event.delta.dy;
+        },
+        onPointerUp: (_) {
+          final dx = _dragDx;
+          final dy = _dragDy;
+          _dragDx = 0;
+          _dragDy = 0;
+          if (dx.abs() >= 40 && dx.abs() > dy.abs()) {
+            _shiftDay(dx < 0 ? 1 : -1);
           }
         },
         child: Column(
           children: [
             // 顶部一行：箭头贴卡片左右两侧，日期与周次居中（参与切日动画）
             SizedBox(
-              height: 44,
+              height: 48,
               child: Stack(
                 children: [
                   Positioned.fill(
@@ -283,14 +292,15 @@ class DashboardPageState extends State<DashboardPage>
                       ),
                     ),
                   ),
+                  // 箭头给足 56x48 的点击区，方便手指点按
                   Positioned(
                     left: 0,
                     top: 0,
                     bottom: 0,
+                    width: 56,
                     child: IconButton(
                       icon: const Icon(Icons.chevron_left),
                       tooltip: '前一天',
-                      visualDensity: VisualDensity.compact,
                       onPressed: () => _shiftDay(-1),
                     ),
                   ),
@@ -298,10 +308,10 @@ class DashboardPageState extends State<DashboardPage>
                     right: 0,
                     top: 0,
                     bottom: 0,
+                    width: 56,
                     child: IconButton(
                       icon: const Icon(Icons.chevron_right),
                       tooltip: '后一天',
-                      visualDensity: VisualDensity.compact,
                       onPressed: () => _shiftDay(1),
                     ),
                   ),
@@ -320,14 +330,14 @@ class DashboardPageState extends State<DashboardPage>
                 ),
               ),
             ),
-            // 底部一行：操作提示 + 回到今天 + 刷新 + 日历
+            // 底部一行：操作提示 + 回到今天 + 刷新
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 6, 6),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
-                      '左右滑动或点日历切换日期',
+                      '左右滑动或点日期切换',
                       style: TextStyle(
                         fontSize: 11,
                         color: scheme.outline,
@@ -361,12 +371,6 @@ class DashboardPageState extends State<DashboardPage>
                           )
                         : const Icon(Icons.refresh),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.calendar_month_outlined),
-                    tooltip: '选择日期',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: _pickDate,
-                  ),
                 ],
               ),
             ),
@@ -381,12 +385,22 @@ class DashboardPageState extends State<DashboardPage>
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          _headerLabel(date),
-          maxLines: 1,
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+        // 点日期文字直接弹日期选择器
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _pickDate,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            child: Text(
+              _headerLabel(date),
+              maxLines: 1,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
         ),
-        const SizedBox(width: 8),
         _buildWeekChip(context, date),
       ],
     );
