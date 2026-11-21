@@ -151,6 +151,9 @@ class RoomOccupancyIndex {
   /// 命中索引的教室数（调试/展示用）。
   int get roomCount => _byRoom.length;
 
+  /// 某教室的全部排课记录（不限周次/节次）。
+  List<RoomLesson> lessonsFor(RoomRef ref) => _byRoom[ref] ?? const [];
+
   /// 某教室在 (week, day) 的、与 [sections] 有交集的排课记录。
   List<RoomLesson> occupiedBy(
     RoomRef ref,
@@ -204,4 +207,39 @@ List<RoomQueryResult> findRooms({
   final empty = results.where((r) => r.isEmpty).toList();
   final busy = results.where((r) => !r.isEmpty).toList();
   return [...empty, ...busy];
+}
+
+/// 某教室某星期（全部周次）的排课记录，按起始节次排序。
+///
+/// day==0（星期未知）的记录也返回，由调用方决定如何展示。
+List<RoomLesson> daySchedule({
+  required RoomScanData scan,
+  required ClassroomDirectory directory,
+  required RoomRef ref,
+  required int day,
+}) {
+  final index = RoomOccupancyIndex(scan, directory);
+  final lessons = index.lessonsFor(ref);
+  final hit = lessons.where((l) => l.day == day || l.day == 0).toList();
+  hit.sort((a, b) => a.startSection.compareTo(b.startSection));
+  return hit;
+}
+
+/// 周次列表的紧凑文本（如 "1-16周" / "1-8,10-17周"）。
+String weeksLabel(List<int> weeks) {
+  if (weeks.isEmpty) return '';
+  final sorted = weeks.toList()..sort();
+  final parts = <String>[];
+  var start = sorted.first;
+  var prev = start;
+  for (final w in sorted.skip(1)) {
+    if (w == prev + 1) {
+      prev = w;
+    } else {
+      parts.add(start == prev ? '$start' : '$start-$prev');
+      start = prev = w;
+    }
+  }
+  parts.add(start == prev ? '$start' : '$start-$prev');
+  return '${parts.join(',')}周';
 }

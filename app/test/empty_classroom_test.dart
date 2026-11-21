@@ -258,6 +258,32 @@ void main() {
       expect(results.last.isEmpty, isFalse);
       expect(results.last.room.number, '101');
     });
+
+    test('daySchedule 返回某教室某天的全部排课并按节次排序', () {
+      final scan = _scanWith([
+        ('1号教学楼101', _lesson(day: 1, s: 3, e: 4, weeks: [1])),
+        ('1号教学楼101', _lesson(day: 1, s: 1, e: 2, weeks: [2])),
+        ('1号教学楼101', _lesson(day: 2, s: 5, e: 6, weeks: [1])),
+        ('1号教学楼102', _lesson(day: 1, s: 7, e: 8, weeks: [1])),
+      ]);
+      final lessons = daySchedule(
+        scan: scan,
+        directory: directory,
+        ref: const RoomRef(building: 1, number: '101'),
+        day: 1,
+      );
+      expect(lessons.length, 2);
+      expect(lessons[0].startSection, 1); // 已排序
+      expect(lessons[0].weeks, [2]);
+      expect(lessons[1].startSection, 3);
+    });
+
+    test('weeksLabel 连续周合并展示', () {
+      expect(weeksLabel([1, 2, 3, 4]), '1-4周');
+      expect(weeksLabel([1, 2, 3, 4, 10]), '1-4,10周');
+      expect(weeksLabel([5]), '5周');
+      expect(weeksLabel([]), '');
+    });
   });
 
   group('扫描数据模型', () {
@@ -341,7 +367,7 @@ void main() {
 
       expect(find.text('还没有教室数据'), findsOneWidget);
       expect(find.text('去扫描教室数据'), findsOneWidget);
-      expect(find.text('查询空教室'), findsOneWidget);
+      expect(find.text('获取空教室信息'), findsOneWidget);
     });
   });
 }
