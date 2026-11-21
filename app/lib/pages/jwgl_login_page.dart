@@ -86,6 +86,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   /// 扫描已启动（含页面跳转后的重新注入阶段）。
   bool _scanActive = false;
 
+  /// 最近一次收到扫描回传的时间（看门狗用：只在持续无回传时才超时）。
+  DateTime _lastScanMessageAt = DateTime.now();
+
   /// WebVPN 滑块验证码自动求解脚本。
   String? _captchaSolverJs;
 
@@ -411,6 +414,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
   /// 班级课表扫描脚本的回传：进度 / 分批数据 / 完成标记。
   void _onRoomScanMessage(String type, String raw) {
+    _lastScanMessageAt = DateTime.now();
     Map<String, dynamic>? j;
     try {
       final decoded = jsonDecode(raw);
@@ -476,6 +480,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       termName: (j['termName'] ?? '').toString(),
       gradeFrom: (j['gradeFrom'] as num?)?.toInt() ?? 0,
       gradeTo: (j['gradeTo'] as num?)?.toInt() ?? 0,
+      semesterStartDate: (j['semesterStartDate'] ?? '').toString(),
     );
     await RoomScanRepository.save(data);
     if (!mounted) return;
@@ -1058,6 +1063,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     final token = ++_fetchToken;
     _scanBuilder = RoomScanBuilder();
     _scanActive = true;
+    _lastScanMessageAt = DateTime.now();
 
     setState(() {
       _fetching = true;
@@ -1074,9 +1080,12 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       return;
     }
 
-    // 兑底：25 秒内没有任何回传，说明脚本没跑起来
+    // 兑底：只有持续 25 秒无任何回传才判定脚本没跑起来。
+    // （扫描本身耗时 20~60 秒，不能只看总时长，要看消息是否还在到达。）
     await Future.delayed(const Duration(seconds: 25));
     if (!mounted || token != _fetchToken || !_fetching) return;
+    final idle = DateTime.now().difference(_lastScanMessageAt).inSeconds;
+    if (idle < 25) return; // 还有回传在到达，扫描正常进行中
     _fail(
       '没有收到教务系统的响应。\n请确认：① 已登录教务系统；'
       '② 当前停留在教务系统内的页面（不是 WebVPN 首页）。',
@@ -1514,6 +1523,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
               ],
             ),
           ),
+          // 扫描/导入进行中：底部固定一条不确定进度条，明确「正在工作」
+          if (_fetching)
+            const LinearProgressIndicator(minHeight: 2.5),
         ],
       ),
       bottomNavigationBar: (!scanMode && !widget.allowImport)

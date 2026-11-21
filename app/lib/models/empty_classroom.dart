@@ -71,6 +71,7 @@ class RoomScanData {
     required this.positions,
     required this.courseNames,
     required this.lessons,
+    this.semesterStartDate = '',
     this.coarseCount = 0,
   });
 
@@ -79,6 +80,10 @@ class RoomScanData {
 
   /// 学期名称，如 "2026-2027-1"。
   final String termName;
+
+  /// 本学期第 1 周的周一日期 "YYYY-MM-DD"（扫描时从教务接口取到）。
+  /// 未导入个人课表时，用它推算查询周次。
+  final String semesterStartDate;
 
   /// 扫描完成时间。
   final DateTime scannedAt;
@@ -111,6 +116,7 @@ class RoomScanData {
         gradeFrom: (j['gradeFrom'] as num?)?.toInt() ?? 0,
         gradeTo: (j['gradeTo'] as num?)?.toInt() ?? 0,
         classCount: (j['classCount'] as num?)?.toInt() ?? 0,
+        semesterStartDate: j['semesterStartDate']?.toString() ?? '',
         positions: ((j['positions'] as List?) ?? [])
             .map((e) => e.toString())
             .toList(),
@@ -131,11 +137,25 @@ class RoomScanData {
         'gradeFrom': gradeFrom,
         'gradeTo': gradeTo,
         'classCount': classCount,
+        'semesterStartDate': semesterStartDate,
         'positions': positions,
         'courseNames': courseNames,
         'lessons': lessons.map((l) => l.toJson()).toList(),
         'coarseCount': coarseCount,
       };
+
+  /// 根据扫描时取到的开学日期推算某日期是第几周（1..30），
+  /// 未取到开学日期或超出范围返回 null。
+  int? weekOf(DateTime date) {
+    final start = DateTime.tryParse(semesterStartDate);
+    if (start == null) return null;
+    final monday = DateTime(start.year, start.month, start.day);
+    final target = DateTime(date.year, date.month, date.day);
+    if (target.isBefore(monday)) return null;
+    final week = target.difference(monday).inDays ~/ 7 + 1;
+    if (week < 1 || week > 30) return null;
+    return week;
+  }
 }
 
 /// 扫描数据构建器：分批接收扫描脚本的回传，最后组装成 [RoomScanData]。
@@ -201,6 +221,7 @@ class RoomScanBuilder {
     required String termName,
     required int gradeFrom,
     required int gradeTo,
+    String semesterStartDate = '',
   }) {
     return RoomScanData(
       term: term,
@@ -209,6 +230,7 @@ class RoomScanBuilder {
       gradeFrom: gradeFrom,
       gradeTo: gradeTo,
       classCount: _classCount,
+      semesterStartDate: semesterStartDate,
       positions: List.unmodifiable(_positions),
       courseNames: List.unmodifiable(_courseNames),
       lessons: List.unmodifiable(_lessons),

@@ -1,29 +1,25 @@
 // ============================================================================
-// 班级课表扫描脚本（空教室功能的数据采集端）v2。
+// 班级课表扫描脚本（空教室功能的数据采集端）v3。
 //
-// 数据来源（教务系统「班级课表」模块，需已登录）：
-//   页面    GET  xsbjkbcx!xsbjkbMain.action            筛选表单 + 课表 iframe
-//   级联    POST xsbjkbcx!getFind.action               院系→专业→班级
-//   课表    GET  xsbjkbcx!xskbList.action?xnxqdm&bjdm&zc  班级课表 HTML
+// 核心逻辑来自实测可用的全校课表导出脚本（NoobLLiu，MIT）：
+//   全校班级列表：POST xsbjkbcx!getFind.action
+//       body: guid=zydm&xnxqdm=<学期>&xqdm=&rxnf=&xsyxdm=&zydm=
+//       院系/专业/入学年份全部留空时，一次返回全校全部班级（约 3500+ 条），
+//       响应为文本 "zydm^getFind:[{dm:班级代码, mc:班级名称}, ...]"。
+//   班级课表数据：GET xsbjkbcx!getKbRq.action?xnxqdm=<学期>&zc=&xsdm=&bjdm=<班级>
+//       返回 JSON 与个人课表接口同构：data[0] 为排课记录，data[1] 为日期数组。
+//       zc 传空即不限周次（整学期），每条记录自带 zc 字段标明上课周次。
 //
-// 取课表的两条路（自动择优）：
-//   A 直连模式：从班级课表页面上下文直接 GET xskbList（与手动查询的
-//     Referer/会话一致），解析响应 HTML。速度最快，每班一个请求。
-//   B 页面模式：直连探测失败时退化为模拟操作 —— 在班级课表页上依次
-//     设置 院系/专业/年级/班级 下拉并触发查询，等课表 iframe 刷出后
-//     直接读 iframe 里的 DOM。同院系+专业+年级只切一次级联，逐班只
-//     换班级下拉 + 点查询。
-//
-// 遍历规则：年级取 [当前年份-5, 当前年份]（如 2026 → 2021..2026）；
-// 学院无专业、专业无班级属正常现象，getFind 返回 [] 直接跳过。
+// 适用范围：校外经 WebVPN 访问、或校内直连，由页面 URL 自动识别（siteBase）。
+// 使用前提：已在当前页面登录教务系统，停留在教务系统任意页面即可。
 //
 // 回传协议（经 window.zsyBridge 发给 Flutter）：
 //   {type:'roomscan_progress', message}                       进度
-//   {type:'roomscan_batch', classes:[...], lessons:[...]}     每个学院一批
+//   {type:'roomscan_batch', classes:[...], lessons:[...]}     每 50 个班一批
 //   {type:'roomscan_done', ok:true, term, ..., diag:{...}}    完成（带诊断）
 //   {type:'roomscan_done', ok:false, error}                   失败
 //
-// 由 App 在页面加载完成后注入（见 jwgl_login_page.dart），可重复注入。
+// 由 App 注入（见 jwgl_login_page.dart），防重入、可由 __zsyRoomScan.stop() 停止。
 // ============================================================================
 
 (function () {
@@ -38,20 +34,31 @@
         return;
     }
 
-    // ---------------------------------------------------------------- 常量
+    // ---------------------------------------------------------------- 配置
 
-    var MAIN_PAGE = 'xsbjkbcx!xsbjkbMain.action';
-    var FIND_API = 'xsbjkbcx!getFind.action';
-    var KB_API = 'xsbjkbcx!xskbList.action';
+    var CLASS_FIND = 'xsbjkbcx!getFind.action';
+    var CLASS_MAIN_PAGE = 'xsbjkbcx!xsbjkbMain.action';
+    var CLASS_KB_DATA = 'xsbjkbcx!getKbRq.action';
+    var KB_LIST_PAGE = 'xsgrkbcx!getXsgrbkList.action';
 
-    // 请求间的小间隔，避免给教务服务器造成压力
-    var GAP_MS = 30;
-    // 连续解析失败的级联请求上限（超过视为会话失效）
-    var MAX_CASCADE_MISS = 3;
-    // 跳转进班级课表页的最大尝试次数（sessionStorage 计数，防死循环）
-    var MAX_NAV_ATTEMPTS = 3;
-    // 直连探测的班级数：前几个班都取不到课表才切页面模式
-    var PROBE_COUNT = 3;
+    // 年级遍历范围：当前年份-5 至当前年份（取后两位，如 2026 -> 21..26 级）
+    var GRADE_OFFSET = 5;
+
+    // 并发数：同时进行的班级课表请求数（队列上限）。
+    // 教务是 HTTP/1.1：浏览器对同域只开约 6 条并发连接，超出的请求自动排队，
+    // 实际同时请求约 6 个；实测全校 3500+ 班约 20 秒抓完。
+    var CONCURRENCY = 100;
+
+    // 单个请求超时（毫秒），超时视为失败并重试一次
+    var REQUEST_TIMEOUT_MS = 20000;
+    // 每个请求失败后的重试次数（网络抖动兜底）
+    var MAX_RETRY = 1;
+
+    // 每 50 个班回传一批 + 打一次进度
+    var BATCH_SIZE = 50;
+
+    // 教室字段为空时的占位文本（与拾光适配脚本一致）
+    var UNKNOWN_POSITION = '未获取到教室';
 
     // ---------------------------------------------------------------- 工具
 
@@ -74,30 +81,12 @@
         return new Promise(function (r) { setTimeout(r, ms); });
     }
 
-    /** 轮询等待条件成立；超时返回 null。 */
-    async function waitFor(fn, timeoutMs, stepMs) {
-        var t0 = Date.now();
-        while (Date.now() - t0 < timeoutMs) {
-            if (stopped()) return null;
-            var ok = false;
-            try { ok = fn(); } catch (e) { ok = false; }
-            if (ok) return true;
-            await sleep(stepMs || 200);
-        }
-        return null;
-    }
-
-    /**
-     * 推算教务系统站点根。
-     * 校内：https://jwgl.zqu.edu.cn/xsbjkbcx!... → origin + '/'
-     * WebVPN：https://webvpn.zqu.edu.cn/https/<加密串>/xsbjkbcx!... → 带加密串的根
-     */
+    /** 推算教务系统站点根（WebVPN 场景会带上加密串那层）。 */
     function siteBase() {
-        var href = String(window.location.href);
         try {
-            var u = new URL(href);
+            var u = new URL(window.location.href);
             var path = u.pathname;
-            var markers = ['xsbjkbcx!', 'xsgrkbcx!'];
+            var markers = ['xsgrkbcx!', 'xsbjkbcx!'];
             for (var k = 0; k < markers.length; k++) {
                 var i = path.indexOf(markers[k]);
                 if (i > 0) return u.origin + path.slice(0, i);
@@ -105,9 +94,9 @@
             var j = path.lastIndexOf('/');
             return u.origin + (j > 0 ? path.slice(0, j + 1) : '/');
         } catch (e) {
-            var plain = href.split(/[?#]/)[0];
-            var m = plain.lastIndexOf('/');
-            return m > 0 ? plain.slice(0, m + 1) : plain;
+            var href = window.location.href.split(/[?#]/)[0];
+            var m = href.lastIndexOf('/');
+            return m > 0 ? href.slice(0, m + 1) : href;
         }
     }
 
@@ -118,15 +107,41 @@
         var opts = [];
         for (var i = 0; i < sel.options.length; i++) {
             var v = String(sel.options[i].value).trim();
+            if (v === '') continue;
             opts.push({
                 value: v,
                 text: String(sel.options[i].textContent || '').trim()
             });
         }
+        if (opts.length === 0) return null;
         return { cur: String(sel.value).trim(), opts: opts };
     }
 
-    /** 解析压缩周次串：连续周合并为区间。 */
+    /** 解析 getFind.action 的响应文本："xxx^getFind:[{dm, mc}, ...]"。 */
+    function parseGetFind(text) {
+        var marker = '^getFind:';
+        var i = String(text).indexOf(marker);
+        if (i < 0) return [];
+        var data;
+        try {
+            data = JSON.parse(String(text).slice(i + marker.length));
+        } catch (e) {
+            return [];
+        }
+        var rows = Array.isArray(data) ? data
+            : (data && Array.isArray(data.rows) ? data.rows : []);
+        var out = [];
+        for (var r = 0; r < rows.length; r++) {
+            var row = rows[r];
+            if (!row || typeof row !== 'object') continue;
+            var value = String(row.dm || row.bjdm || '').trim();
+            var text2 = String(row.mc || row.bjmc || '').trim();
+            if (value) out.push({ value: value, text: text2 || value });
+        }
+        return out;
+    }
+
+    /** 解析压缩周次串：连续周合并为区间（"1-8,10-17"）。 */
     function packWeeks(weeks) {
         var uniq = Array.from(new Set(weeks)).filter(function (w) {
             return w > 0;
@@ -143,22 +158,41 @@
         return parts.join(',');
     }
 
-    /**
-     * 解析周次文本，兼容 "1-8,10-17周" / "第1-16周" / "1,3,5周" /
-     * "1111111100000000" 位串 / "1-16(单)" 等写法。
-     */
+    /** 解析节次字段：jcdm2 形如 "01,02,03"；jcdm 形如 "0102"。 */
+    function parseSections(jcdm2, jcdm) {
+        var txt = String(jcdm2 || jcdm || '').trim();
+        var nums = [];
+        var push = function (n) { if (n > 0 && nums.indexOf(n) === -1) nums.push(n); };
+        var raws = txt.split(/[,\s]+/);
+        for (var i = 0; i < raws.length; i++) {
+            var part = raws[i].trim();
+            if (!part || !/^\d+$/.test(part)) continue;
+            if (part.length <= 2) {
+                push(parseInt(part, 10));
+            } else {
+                for (var k = 0; k < part.length; k += 2) {
+                    push(parseInt(part.slice(k, k + 2), 10));
+                }
+            }
+        }
+        return nums.sort(function (a, b) { return a - b; });
+    }
+
+    /** 解析周次字段，兼容区间 / 逗号列表 / 位串 / 单双周后缀。 */
     function parseWeekText(zc) {
         var txt = String(zc === null || zc === undefined ? '' : zc).trim();
         if (!txt) return [];
+
         if (/^[01]{4,}$/.test(txt)) {
             var bits = [];
-            for (var i = 0; i < txt.length; i++) {
-                if (txt[i] === '1') bits.push(i + 1);
+            for (var b = 0; b < txt.length; b++) {
+                if (txt[b] === '1') bits.push(b + 1);
             }
             return bits;
         }
+
         var cleaned = txt
-            .replace(/第|周|星期/g, '')
+            .replace(/周|星期/g, '')
             .replace(/[（(][^）)]*[）)]/g, '')
             .replace(/[单双]/g, '');
         var out = [];
@@ -166,10 +200,13 @@
         for (var t = 0; t < tokens.length; t++) {
             var part = tokens[t].trim();
             if (!part) continue;
-            var range = /^(\d+)\s*[-~～]\s*(\d+)$/.exec(part);
+            var range = /^(\d+)\s*-\s*(\d+)$/.exec(part);
             if (range) {
-                var a = parseInt(range[1], 10), b = parseInt(range[2], 10);
-                if (a > 0 && b >= a) for (var w = a; w <= b; w++) out.push(w);
+                var a = parseInt(range[1], 10);
+                var b2 = parseInt(range[2], 10);
+                if (a > 0 && b2 >= a) {
+                    for (var w = a; w <= b2; w++) out.push(w);
+                }
                 continue;
             }
             if (/^\d+$/.test(part)) {
@@ -180,373 +217,335 @@
         return Array.from(new Set(out)).sort(function (x, y) { return x - y; });
     }
 
-    /** 解析节次文本："01,02" / "0102" / "1-2节" / "第3节" 等。 */
-    function parseSectionsText(txt) {
-        var raw = String(txt || '').trim();
-        if (!raw) return [];
-        var cleaned = raw.replace(/第/g, '').replace(/节/g, ' ');
-        var nums = [];
-        var push = function (n) {
-            if (n > 0 && n <= 30 && nums.indexOf(n) === -1) nums.push(n);
-        };
-        var tokens = cleaned.split(/[,，、\s/]+/);
-        for (var i = 0; i < tokens.length; i++) {
-            var part = tokens[i].trim();
-            if (!part) continue;
-            var range = /^(\d{1,2})\s*[-~～]\s*(\d{1,2})$/.exec(part);
-            if (range) {
-                var a = parseInt(range[1], 10), b = parseInt(range[2], 10);
-                if (a > 0 && b >= a) for (var s = a; s <= b; s++) push(s);
+    /** 节次与周次合并去重（与拾光适配脚本 mergeAndDistinctCourses 同构）。 */
+    function mergeAndDistinctCourses(courses) {
+        if (!Array.isArray(courses) || courses.length <= 1) return courses;
+
+        var list = courses.map(function (c) {
+            return {
+                name: c.name || '',
+                position: c.position || '',
+                day: c.day || 0,
+                startSection: c.startSection || 0,
+                endSection: c.endSection || 0,
+                weeks: Array.isArray(c.weeks) ? c.weeks.slice().sort(function (a, b) { return a - b; }) : []
+            };
+        });
+
+        list.sort(function (a, b) {
+            return a.name.localeCompare(b.name) ||
+                   a.position.localeCompare(b.position) ||
+                   (a.day || 0) - (b.day || 0) ||
+                   a.weeks.join(',').localeCompare(b.weeks.join(',')) ||
+                   (a.startSection || 0) - (b.startSection || 0);
+        });
+
+        var step1Merged = [];
+        var current = list[0];
+
+        for (var i = 1; i < list.length; i++) {
+            var next = list[i];
+            var isSameCourseAndWeeks =
+                current.name === next.name &&
+                current.position === next.position &&
+                current.day === next.day &&
+                current.weeks.join(',') === next.weeks.join(',');
+            var isContinuous = current.endSection + 1 === next.startSection;
+            var isDuplicate = current.startSection === next.startSection &&
+                current.endSection === next.endSection;
+
+            if (isSameCourseAndWeeks && isContinuous) {
+                current.endSection = next.endSection;
+            } else if (isSameCourseAndWeeks && isDuplicate) {
                 continue;
-            }
-            if (/^\d+$/.test(part)) {
-                if (part.length > 2) {
-                    // "0102" 连写：按两位一组拆开
-                    for (var k = 0; k < part.length; k += 2) {
-                        push(parseInt(part.slice(k, k + 2), 10));
-                    }
-                } else {
-                    push(parseInt(part, 10));
-                }
+            } else {
+                step1Merged.push(current);
+                current = next;
             }
         }
-        return nums.sort(function (x, y) { return x - y; });
-    }
+        step1Merged.push(current);
 
-    /** 解析星期文本："星期一" / "周一" / "一" / "1"。 */
-    function parseDayText(txt) {
-        var s = String(txt || '').trim();
-        if (!s) return [];
-        var map = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 7, '天': 7 };
-        var out = [];
-        var re = /[星期周]*\s*([一二三四五六日天])/g;
-        var m;
-        while ((m = re.exec(s)) !== null) {
-            var d = map[m[1]];
-            if (d && out.indexOf(d) === -1) out.push(d);
-        }
-        if (out.length === 0) {
-            var nums = s.match(/[1-7]/g) || [];
-            for (var i = 0; i < nums.length; i++) {
-                var n = parseInt(nums[i], 10);
-                if (out.indexOf(n) === -1) out.push(n);
+        step1Merged.sort(function (a, b) {
+            return a.name.localeCompare(b.name) ||
+                   a.position.localeCompare(b.position) ||
+                   (a.day || 0) - (b.day || 0) ||
+                   (a.startSection || 0) - (b.startSection || 0) ||
+                   (a.endSection || 0) - (b.endSection || 0);
+        });
+
+        var step2Merged = [];
+        var cur = step1Merged[0];
+
+        for (var u = 1; u < step1Merged.length; u++) {
+            var nxt = step1Merged[u];
+            var isSameCourseAndSection =
+                cur.name === nxt.name &&
+                cur.position === nxt.position &&
+                cur.day === nxt.day &&
+                cur.startSection === nxt.startSection &&
+                cur.endSection === nxt.endSection;
+
+            if (isSameCourseAndSection) {
+                var merged = cur.weeks.concat(nxt.weeks);
+                cur.weeks = Array.from(new Set(merged)).sort(function (a, b) { return a - b; });
+            } else {
+                step2Merged.push(cur);
+                cur = nxt;
             }
         }
-        return out.sort(function (x, y) { return x - y; });
-    }
+        step2Merged.push(cur);
 
-    // ---------------------------------------------------------------- 解析
+        return step2Merged;
+    }
 
     /**
-     * 从课表文档（HTML 字符串解析结果或 iframe contentDocument）中
-     * 解析「上课信息」列表。
-     *
-     * 列头按文本匹配列含义；缺星期/节次列时退化为「整天占用」
-     * （d=0、s=1..e=14），由 App 端按保守策略处理。
-     *
-     * @returns {{lessons: Array, coarse: number, rows: number,
-     *            headers: Array, reason: string}}
+     * 解析单个班级的整学期排课记录（与拾光 collectCourses 同构）。
+     * position 按教务系统原文读出（「第一教学楼」在系统里登记为「1号教学楼」）。
      */
-    function parseTimetableDoc(doc, requestedWeek) {
-        var tables = doc.querySelectorAll('table');
-        var best = null;
-        var bestScore = 0;
-        var firstHeaders = [];
+    function collectClassCourses(records) {
+        var courses = [];
 
-        for (var t = 0; t < tables.length; t++) {
-            var tb = tables[t];
-            var headCells = tb.querySelectorAll('thead th');
-            if (headCells.length === 0) {
-                var firstRow = tb.querySelector('tr');
-                if (firstRow) headCells = firstRow.querySelectorAll('th,td');
-            }
-            if (headCells.length < 3) continue;
+        for (var i = 0; i < records.length; i++) {
+            var c = records[i];
+            if (!c || typeof c !== 'object') continue;
 
-            var heads = [];
-            for (var h = 0; h < headCells.length; h++) {
-                heads.push(String(headCells[h].textContent || '').trim());
-            }
-            if (firstHeaders.length === 0) firstHeaders = heads.slice(0, 12);
+            var day = parseInt(c.xq, 10);
+            if (!Number.isInteger(day) || day < 1 || day > 7) continue;
 
-            var score = 0;
-            var cols = {};
-            for (var i = 0; i < heads.length; i++) {
-                var txt = heads[i];
-                if (!txt) continue;
-                if (txt.indexOf('星期') !== -1) { cols.day = i; score += 2; }
-                else if (txt.indexOf('周次') !== -1) { cols.weeks = i; score += 2; }
-                else if (txt.indexOf('节次') !== -1 ||
-                         (txt.indexOf('节') !== -1 && txt.indexOf('周') === -1)) {
-                    cols.sections = i; score += 2;
+            var name = String(c.kcmc || '').trim();
+            if (!name) continue;
+
+            var sections = parseSections(c.jcdm2, c.jcdm);
+            if (sections.length === 0) continue;
+
+            var weeks = parseWeekText(c.zc);
+            if (weeks.length === 0) continue;
+
+            var position = String(c.jxcdmc || '').trim();
+            // 没有教室信息的排课对空教室判定无用，跳过（减小回传体积）
+            if (!position || position === UNKNOWN_POSITION) continue;
+
+            var startSection = sections[0];
+            var endSection = sections[sections.length - 1];
+
+            var exist = null;
+            for (var e = 0; e < courses.length; e++) {
+                var x = courses[e];
+                if (x.name === name && x.position === position &&
+                    x.day === day && x.startSection === startSection &&
+                    x.endSection === endSection) {
+                    exist = x;
+                    break;
                 }
-                else if (txt.indexOf('地点') !== -1 || txt.indexOf('场所') !== -1 ||
-                         (txt.indexOf('教室') !== -1 && txt.indexOf('名称') === -1)) {
-                    cols.position = i; score += 2;
-                }
-                else if (txt.indexOf('教师') !== -1) { cols.teacher = i; score += 1; }
-                else if (txt.indexOf('课程') !== -1) { cols.name = i; score += 1; }
             }
-            // 认定是上课列表的最低标准：有地点列 + 至少还有一个其他关键列
-            if (cols.position === undefined || score < 4) continue;
-            if (score > bestScore) { bestScore = score; best = { cols: cols, table: tb }; }
-        }
-
-        if (!best) {
-            return {
-                lessons: [], coarse: 0, rows: tables.length,
-                headers: firstHeaders, reason: 'no-table'
-            };
-        }
-
-        var cols = best.cols;
-        var rows = best.table.querySelectorAll('tr');
-        var lessons = [];
-        var coarse = 0;
-
-        for (var r = 1; r < rows.length; r++) {
-            var cells = rows[r].querySelectorAll('td,th');
-            if (cells.length < 3) continue;
-            var get = function (idx) {
-                return idx !== undefined && idx < cells.length
-                    ? String(cells[idx].textContent || '').trim() : '';
-            };
-
-            var position = get(cols.position);
-            if (!position) continue;
-            var name = get(cols.name);
-            var weeks = parseWeekText(get(cols.weeks));
-
-            var days = parseDayText(get(cols.day));
-            var sections = parseSectionsText(get(cols.sections));
-
-            var coarseRow = false;
-            if (days.length === 0 || sections.length === 0) {
-                // 列表缺星期/节次列：退化为整天占用（保守策略）
-                coarseRow = true;
-                coarse++;
-                if (days.length === 0) days = [0]; // 0 = 任意星期
-                if (sections.length === 0) sections = [1, 14];
-            }
-            if (weeks.length === 0) {
-                if (!coarseRow) continue; // 有周次列但解析不出 → 丢弃
-                // 无周次列：按整学期占用（保守策略）
-                weeks = [];
-                for (var fw = 1; fw <= 25; fw++) weeks.push(fw);
-            }
-
-            for (var d = 0; d < days.length; d++) {
-                lessons.push({
-                    d: days[d],
-                    s: sections[0],
-                    e: sections[sections.length - 1],
-                    w: packWeeks(weeks),
-                    p: position,
-                    n: name,
-                    coarse: coarseRow
+            if (exist) {
+                var union = exist.weeks.concat(weeks);
+                exist.weeks = Array.from(new Set(union)).sort(function (a, b) { return a - b; });
+            } else {
+                courses.push({
+                    name: name,
+                    position: position,
+                    day: day,
+                    startSection: startSection,
+                    endSection: endSection,
+                    weeks: weeks
                 });
             }
         }
 
-        // 同键去重（同课同段同地点多行）
-        var seen = {};
-        var uniq = [];
-        for (var u = 0; u < lessons.length; u++) {
-            var L = lessons[u];
-            var key = L.d + '|' + L.s + '|' + L.e + '|' + L.w + '|' + L.p + '|' + L.n;
-            if (seen[key]) continue;
-            seen[key] = true;
-            uniq.push(L);
-        }
-        return {
-            lessons: uniq, coarse: coarse, rows: rows.length - 1,
-            headers: firstHeaders, reason: uniq.length > 0 ? 'ok' : 'no-rows'
-        };
-    }
+        var totalWeeks = courses.reduce(function (max, c2) {
+            return c2.weeks.reduce(function (m, w) { return w > m ? w : m; }, max);
+        }, 0);
 
-    function parseClassTimetable(html, requestedWeek) {
-        var doc = new DOMParser().parseFromString(html, 'text/html');
-        return parseTimetableDoc(doc, requestedWeek);
+        return { courses: mergeAndDistinctCourses(courses), totalWeeks: totalWeeks };
     }
-
-    // ---------------------------------------------------------------- 直连模式
 
     /**
-     * 级联查询接口。返回 [{dm, mc}, ...]，空组合返回 []。
-     * 响应体形如 "<guid>^getFind:[...]"，未登录时返回 HTML。
+     * 从班级名称/代码推断入学年级（后两位，如 "21"）。
+     * ZQU 班级名实测形如 "2026级法学1班"、"22级碳中和理科班"，两种写法均已覆盖。
      */
-    async function getFind(base, termCode, guid, xsyxdm, zydm, rxnf) {
-        var body = new URLSearchParams({
-            guid: guid,
-            xnxqdm: termCode,
-            xqdm: '',
-            rxnf: rxnf || '',
-            xsyxdm: xsyxdm || '',
-            zydm: zydm || ''
-        }).toString();
-        var resp = await fetch(base + FIND_API, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: body
-        });
-        if (!resp.ok) throw new Error('级联查询 HTTP ' + resp.status);
-        var text = await resp.text();
-        var i = text.indexOf('^getFind:');
-        if (i < 0) return null; // 不是级联响应（多为登录页 HTML）
-        var arr = JSON.parse(text.slice(i + 9));
-        if (!Array.isArray(arr)) return [];
-        return arr.filter(function (x) {
-            return x && x.dm !== undefined && String(x.dm).trim() !== '';
-        });
-    }
-
-    /** 直连请求某班的课表 HTML 并解析。 */
-    async function fetchClassTimetable(base, termCode, classCode) {
-        var url = base + KB_API +
-            '?xnxqdm=' + encodeURIComponent(termCode) +
-            '&bjdm=' + encodeURIComponent(classCode) +
-            '&zc=1';
-        var resp = await fetch(url, { method: 'GET', credentials: 'include' });
-        if (!resp.ok) throw new Error('课表请求 HTTP ' + resp.status);
-        var html = await resp.text();
-        var parsed = parseClassTimetable(html, 1);
-        parsed.htmlLen = html.length;
-        return parsed;
-    }
-
-    // ---------------------------------------------------------------- 页面模式
-
-    function el(id) {
-        return document.querySelector('#' + id);
-    }
-
-    function setSelect(sel, value) {
-        if (!sel || !sel.options) return false;
-        for (var i = 0; i < sel.options.length; i++) {
-            if (String(sel.options[i].value) === String(value)) {
-                sel.value = String(value);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function fireChange(sel) {
-        if (!sel) return;
-        try {
-            sel.dispatchEvent(new Event('change', { bubbles: true }));
-        } catch (e) { /* 忽略 */ }
-    }
-
-    function findQueryButton() {
-        var nodes = document.querySelectorAll(
-            'input[type=button],input[type=submit],button,a.btn,a');
-        for (var i = 0; i < nodes.length; i++) {
-            var t = String(nodes[i].value || nodes[i].textContent || '').trim();
-            if (t.indexOf('查询') !== -1 || t.indexOf('查 询') !== -1) {
-                return nodes[i];
-            }
-        }
+    function gradeOf(text, code, gradeSet) {
+        var t = String(text || '');
+        var m = /20(\d{2})\s*级/.exec(t);
+        if (m && gradeSet[m[1]]) return m[1];
+        m = /(\d{2})\s*级/.exec(t);
+        if (m && gradeSet[m[1]]) return m[1];
+        m = /20(\d{2})/.exec(String(code || ''));
+        if (m && gradeSet[m[1]]) return m[1];
         return null;
     }
 
-    function findTimetableFrame() {
-        var frames = document.querySelectorAll('iframe');
-        for (var i = 0; i < frames.length; i++) {
-            var src = String(frames[i].getAttribute('src') || '');
-            if (src.indexOf('xskb') !== -1) return frames[i];
-        }
-        return frames.length > 0 ? frames[0] : null;
+    /** 简单字符串哈希（djb2），识别「不同班级返回了同一份课表」的异常。 */
+    function strHash(s) {
+        var h = 5381;
+        for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+        return h.toString(16);
     }
 
-    function frameSignature(frame) {
+    /** 带超时的 fetch（AbortController），超时抛错由上层重试。 */
+    function fetchWithTimeout(url, options) {
+        var ctrl = new AbortController();
+        var timer = setTimeout(function () { ctrl.abort(); }, REQUEST_TIMEOUT_MS);
+        return fetch(url, Object.assign({}, options, { signal: ctrl.signal }))
+            .finally(function () { clearTimeout(timer); });
+    }
+
+    // ---------------------------------------------------------------- 数据获取
+
+    /** 读取学期下拉框（与拾光适配脚本相同）。 */
+    async function fetchTermOptions(base) {
+        var resp = await fetch(base + KB_LIST_PAGE, { method: 'GET', credentials: 'include' });
+        if (!resp.ok) throw new Error('学期列表请求失败（HTTP ' + resp.status + '）');
+        var html = await resp.text();
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var terms = readSelectOptions(doc, 'xnxqdm');
+        if (!terms) throw new Error('未找到学期列表，请确认已登录并进入教务系统');
+        return terms;
+    }
+
+    /**
+     * 一次性获取全校班级列表。
+     * guid=zydm 且院系/专业/入学年份全部留空时返回全校全部班级；
+     * 失败时退回「按院系级联枚举」。
+     */
+    async function fetchAllClasses(base, termCode) {
+        var body = 'guid=zydm&xnxqdm=' + encodeURIComponent(termCode) +
+            '&xqdm=&rxnf=&xsyxdm=&zydm=';
+
         try {
-            var doc = frame.contentDocument;
-            if (!doc || !doc.body) return '';
-            return String(frame.src || '') + '#' + doc.body.innerText.length;
-        } catch (e) {
-            return '';
-        }
+            var resp = await fetch(base + CLASS_FIND, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: body
+            });
+            if (resp.ok) {
+                var classes = parseGetFind(await resp.text());
+                if (classes.length > 0) {
+                    return { classes: classes, source: '全校一次获取' };
+                }
+            }
+        } catch (e) { /* 落到兜底 */ }
+
+        progress('一次获取失败，退回按院系级联枚举 ...');
+        return await fetchAllClassesByCascade(base, termCode);
     }
 
-    /**
-     * 页面模式取某班的课表：设置班级下拉 → 触发查询 → 等课表刷新 → 读 iframe。
-     * 调用前需先用 prepareGroup 把 院系/专业/年级 级联到位。
-     */
-    async function queryClassViaPage(classCode) {
-        var bj = el('bjdm');
-        if (!bj) return { lessons: [], reason: 'no-bjdm-select', headers: [] };
-        if (!setSelect(bj, classCode)) {
-            return { lessons: [], reason: 'bjdm-option-missing', headers: [] };
+    /** 兜底：抓班级课表主页的院系下拉框，按「院系 -> 专业 -> 班级」逐级 getFind 枚举。 */
+    async function fetchAllClassesByCascade(base, termCode) {
+        var resp = await fetch(base + CLASS_MAIN_PAGE, { method: 'GET', credentials: 'include' });
+        if (!resp.ok) throw new Error('班级课表主页请求失败（HTTP ' + resp.status + '）');
+
+        var doc = new DOMParser().parseFromString(await resp.text(), 'text/html');
+        var yxSel = readSelectOptions(doc, 'xsyxdm');
+        if (!yxSel || yxSel.opts.length === 0) {
+            throw new Error('兜底级联失败：主页未找到院系下拉框 #xsyxdm');
         }
 
-        var frame = findTimetableFrame();
-        var sigBefore = frame ? frameSignature(frame) : '';
-
-        fireChange(bj);
-        var btn = findQueryButton();
-        if (btn) {
-            try { btn.click(); } catch (e) { /* 忽略 */ }
+        async function find(params) {
+            var body = 'guid=' + params.guid +
+                '&xnxqdm=' + encodeURIComponent(termCode) +
+                '&xqdm=&rxnf=' + (params.rxnf || '') +
+                '&xsyxdm=' + (params.xsyxdm || '') +
+                '&zydm=' + (params.zydm || '');
+            var r = await fetch(base + CLASS_FIND, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: body
+            });
+            return parseGetFind(await r.text());
         }
 
-        // 等课表刷新：签名变化，或（首次查询）出现非空内容
-        await waitFor(function () {
-            var f = findTimetableFrame();
-            if (!f) return false;
-            var sig = frameSignature(f);
-            if (!sig) return false;
-            return sig !== sigBefore || sigBefore === '';
-        }, 15000, 300);
-
-        await sleep(300); // 等 DOM 稳定
-        var f2 = findTimetableFrame();
-        if (!f2 || !f2.contentDocument || !f2.contentDocument.body) {
-            return { lessons: [], reason: 'no-frame-doc', headers: [] };
-        }
-        var parsed = parseTimetableDoc(f2.contentDocument, 1);
-        parsed.reason = parsed.lessons.length > 0 ? 'ok' : parsed.reason;
-        return parsed;
-    }
-
-    /**
-     * 把 院系/专业/年级 级联切到位（同一组合只切一次）。
-     * 依赖页面自身的 change 处理填充下级下拉。
-     */
-    async function prepareGroup(xsyxdm, zydm, nf) {
-        var yx = el('xsyxdm');
-        if (!yx) return false;
-
-        if (String(yx.value) !== String(xsyxdm)) {
-            if (!setSelect(yx, xsyxdm)) return false;
-            fireChange(yx);
-            var filled = await waitFor(function () {
-                var zy = el('zydm');
-                return zy && Array.from(zy.options).some(function (o) {
-                    return String(o.value) === String(zydm);
+        var seen = {};
+        var out = [];
+        for (var i = 0; i < yxSel.opts.length; i++) {
+            if (stopped()) break;
+            var yx = yxSel.opts[i];
+            var zyList = await find({ guid: 'xsyxdm', xsyxdm: yx.value });
+            await sleep(150);
+            for (var z = 0; z < zyList.length; z++) {
+                var bjList = await find({
+                    guid: 'zydm', xsyxdm: yx.value, zydm: zyList[z].value
                 });
-            }, 10000, 250);
-            if (!filled) return false;
+                await sleep(80);
+                for (var b = 0; b < bjList.length; b++) {
+                    var bj = bjList[b];
+                    if (seen[bj.value]) continue;
+                    seen[bj.value] = true;
+                    out.push(bj);
+                }
+            }
+            progress('级联进度：' + yx.text + ' -> 累计 ' + out.length + ' 个班级');
         }
-
-        var zy = el('zydm');
-        if (!zy || !setSelect(zy, zydm)) return false;
-        fireChange(zy);
-
-        var nfSel = el('rxnf');
-        if (nfSel) {
-            if (!setSelect(nfSel, nf)) return false;
-            fireChange(nfSel);
+        if (out.length === 0) {
+            throw new Error('兜底级联未取得任何班级（若尚未登录教务系统，请先登录后重试）');
         }
+        return { classes: out, source: '按院系级联枚举' };
+    }
 
-        // 等班级下拉填充（页面按 yx+zy+nf 调 getFind）
-        var ok = await waitFor(function () {
-            var bj = el('bjdm');
-            return bj && bj.options.length > 1;
-        }, 8000, 250);
-        return ok != null;
+    /** 请求某个班级整学期的课表原始数据（一次请求，zc 空=整学期）。 */
+    async function fetchClassKbRaw(base, termCode, bjdm) {
+        var url = base + CLASS_KB_DATA +
+            '?xnxqdm=' + encodeURIComponent(termCode) +
+            '&zc=' +
+            '&xsdm=' +
+            '&bjdm=' + encodeURIComponent(bjdm);
+
+        var resp = await fetchWithTimeout(url, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (!resp.ok) return { records: null, raw: '' };
+
+        var text = await resp.text();
+        var data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            return { records: null, raw: text };
+        }
+        if (!Array.isArray(data) || data.length < 2) return { records: null, raw: text };
+        return { records: Array.isArray(data[0]) ? data[0] : [], raw: text };
+    }
+
+    /** 请求第 1 周的课表，取周一日期作为学期开始日期。 */
+    async function fetchFirstWeekStart(base, termCode, bjdm) {
+        var url = base + CLASS_KB_DATA +
+            '?xnxqdm=' + encodeURIComponent(termCode) +
+            '&zc=1&xsdm=' +
+            '&bjdm=' + encodeURIComponent(bjdm);
+
+        try {
+            var resp = await fetch(url, {
+                method: 'GET',
+                credentials: 'include',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            if (!resp.ok) return null;
+
+            var data = JSON.parse(await resp.text());
+            if (!Array.isArray(data) || data.length < 2) return null;
+
+            var dates = data[1] || [];
+            for (var i = 0; i < dates.length; i++) {
+                var d = dates[i];
+                if (!d) continue;
+                if (parseInt(d.xqmc, 10) !== 1) continue;
+                var rq = String(d.rq || '').trim();
+                if (/^\d{4}-\d{2}-\d{2}$/.test(rq)) return rq;
+            }
+            return null;
+        } catch (e) {
+            return null;
+        }
     }
 
     // ---------------------------------------------------------------- 主流程
@@ -559,7 +558,6 @@
 
     function stopped() { return state.stopRequested; }
 
-    /** 结束本轮扫描并放开重新扫描的口子。 */
     function finish() {
         state.running = false;
         if (window.__zsyRoomScan) window.__zsyRoomScan.running = false;
@@ -569,283 +567,190 @@
         var t0 = Date.now();
         var base = siteBase();
 
-        // 0. 必须停在班级课表页：不在就跳过去，页面加载完成后 App 会重新注入
-        if (String(window.location.href).indexOf('xsbjkbcx!') === -1) {
-            var navKey = 'zsyRoomScanNav';
-            var navCount = parseInt(sessionStorage.getItem(navKey) || '0', 10) + 1;
-            sessionStorage.setItem(navKey, String(navCount));
-            if (navCount > MAX_NAV_ATTEMPTS) {
-                sessionStorage.removeItem(navKey);
-                finish();
-                post({
-                    type: 'roomscan_done', ok: false,
-                    error: '多次尝试进入班级课表页失败。请先在教务系统里打开'
-                         + '「信息查询 → 班级课表」，再点扫描。'
-                });
-                return;
-            }
-            progress('正在进入班级课表页面（' + navCount + '/' + MAX_NAV_ATTEMPTS + '）...');
-            window.location.href = base + MAIN_PAGE;
-            return; // 跳转后脚本随页面重载，由 App 重新注入
-        }
-        sessionStorage.removeItem('zsyRoomScanNav');
-
-        // 1. 从页面下拉框取学期与院系（live DOM）
-        var termSel = readSelectOptions(document, 'xnxqdm');
-        if (!termSel) {
-            finish();
-            post({ type: 'roomscan_done', ok: false, error: '未找到学期下拉框，请确认已登录教务系统' });
-            return;
-        }
-        var termCode = termSel.cur;
-        var termName = '';
-        for (var ti = 0; ti < termSel.opts.length; ti++) {
-            if (termSel.opts[ti].value === termCode) termName = termSel.opts[ti].text;
-        }
-        if (!termCode) {
-            var withValue = termSel.opts.filter(function (o) { return o.value; });
-            if (withValue.length === 0) {
-                finish();
-                post({ type: 'roomscan_done', ok: false, error: '学期下拉框为空，请确认已登录教务系统' });
-                return;
-            }
-            termCode = withValue[withValue.length - 1].value;
-            termName = withValue[withValue.length - 1].text;
-        }
-
-        var collegeSel = readSelectOptions(document, 'xsyxdm');
-        if (!collegeSel) {
-            finish();
-            post({ type: 'roomscan_done', ok: false, error: '未找到院系下拉框，请确认页面为班级课表' });
-            return;
-        }
-        var colleges = collegeSel.opts.filter(function (o) { return o.value !== ''; });
-        if (colleges.length === 0) {
-            finish();
-            post({ type: 'roomscan_done', ok: false, error: '院系下拉框没有可选学院' });
-            return;
-        }
-
-        // 2. 年级窗口：[当前年份-5, 当前年份]
-        var nowYear = new Date().getFullYear();
-        var gradeFrom = nowYear - 5;
-        var gradeTo = nowYear;
-
-        progress('学期 ' + termName + '（' + termCode + '），共 ' + colleges.length +
-            ' 个学院，年级 ' + gradeFrom + '-' + gradeTo);
-
-        // 3. 探测：用第一个班的课表决定走直连还是页面模式
-        var mode = 'direct'; // direct | page
-        var diag = {
-            mode: '',
-            probe: null,
-            directOk: 0, directFail: 0,
-            pageOk: 0, pageFail: 0,
-            failures: []
-        };
-
-        var firstClasses = null;
+        // 1. 学期列表（取当前学期）
+        progress('正在读取学期列表 ...');
+        var termCode, termName;
         try {
-            var c0 = colleges[0];
-            var majors0 = await getFind(base, termCode, 'xsyxdm', c0.value, '', '');
-            await sleep(GAP_MS);
-            if (majors0 && majors0.length > 0) {
-                for (var g0 = gradeFrom; g0 <= gradeTo && !firstClasses; g0++) {
-                    var cls0 = await getFind(base, termCode, 'rxnf',
-                        c0.value, String(majors0[0].dm), String(g0));
-                    await sleep(GAP_MS);
-                    if (cls0 && cls0.length > 0) {
-                        firstClasses = { college: c0, major: majors0[0], grade: g0, list: cls0 };
-                    }
-                }
+            var terms = await fetchTermOptions(base);
+            termCode = terms.cur;
+            termName = '';
+            for (var ti = 0; ti < terms.opts.length; ti++) {
+                if (terms.opts[ti].value === termCode) termName = terms.opts[ti].text;
             }
-        } catch (e) { /* 探测失败不阻塞，后面正常走 */ }
-
-        if (firstClasses) {
-            progress('正在探测课表获取方式 ...');
-            try {
-                var probe = await fetchClassTimetable(base, termCode,
-                    String(firstClasses.list[0].dm).trim());
-                diag.probe = {
-                    status: 'fetched',
-                    htmlLen: probe.htmlLen,
-                    tables: probe.rows,
-                    headers: probe.headers,
-                    lessons: probe.lessons.length,
-                    reason: probe.reason
-                };
-                mode = probe.lessons.length > 0 ? 'direct' : 'page';
-            } catch (e) {
-                diag.probe = { status: 'error', error: String(e && e.message || e) };
-                mode = 'page';
+            if (!termCode) {
+                var withValue = terms.opts.filter(function (o) { return o.value; });
+                if (withValue.length === 0) throw new Error('学期下拉框为空');
+                termCode = withValue[withValue.length - 1].value;
+                termName = withValue[withValue.length - 1].text;
             }
-        } else {
-            diag.probe = { status: 'no-class' };
+        } catch (e) {
+            finish();
+            post({ type: 'roomscan_done', ok: false, error: '读取学期失败：' + e.message });
+            return;
         }
-        diag.mode = mode;
-        progress(mode === 'direct'
-            ? '直连接口可用，开始全量扫描 ...'
-            : '直连接口取不到课表，改用页面模式（模拟切换班级查询，速度较慢）...');
 
-        // 4. 遍历：院系 → 专业 → 年级 → 班级 → 课表
-        var totalClasses = 0;
-        var totalLessons = 0;
-        var totalCoarse = 0;
-        var missStreak = 0;
-        var uiGroup = ''; // 页面模式下当前级联位置，避免重复切换
+        // 2. 全校班级列表（一次请求；失败退回级联枚举）
+        progress('正在获取全校班级列表 ...');
+        var classInfo;
+        try {
+            classInfo = await fetchAllClasses(base, termCode);
+        } catch (e) {
+            finish();
+            post({ type: 'roomscan_done', ok: false, error: '班级列表获取失败：' + e.message });
+            return;
+        }
 
-        for (var ci = 0; ci < colleges.length; ci++) {
-            if (stopped()) break;
-            var college = colleges[ci];
-            var collegeName = college.text || college.value;
+        // 3. 年级过滤：当前年份-5 至当前年份
+        var nowYear = new Date().getFullYear();
+        var gradeFromYear = nowYear - GRADE_OFFSET;
+        var gradeToYear = nowYear;
+        var grades = [];
+        var gradeSet = {};
+        for (var y = gradeFromYear; y <= gradeToYear; y++) {
+            var g2 = String(y % 100).padStart(2, '0');
+            grades.push(g2);
+            gradeSet[g2] = true;
+        }
 
-            var majors = [];
-            try {
-                majors = await getFind(base, termCode, 'xsyxdm', college.value, '', '');
-                missStreak = 0;
-            } catch (e) {
-                progress('院系 ' + collegeName + ' 查询失败：' + e.message);
-                majors = [];
-            }
-            if (majors === null) {
-                missStreak++;
-                if (missStreak >= MAX_CASCADE_MISS) {
-                    finish();
-                    post({
-                        type: 'roomscan_done', ok: false,
-                        error: '级联查询连续无响应，登录会话可能已失效，请重新登录后再试'
-                    });
-                    return;
-                }
-                majors = [];
-            }
-            await sleep(GAP_MS);
+        var picked = [];
+        for (var c = 0; c < classInfo.classes.length; c++) {
+            var item = classInfo.classes[c];
+            var g = gradeOf(item.text, item.value, gradeSet);
+            if (g) picked.push({ value: item.value, text: item.text, grade: g });
+        }
+        progress('共 ' + classInfo.classes.length + ' 个班级（' + classInfo.source +
+            '），目标年级 ' + grades.join('/') + ' 级过滤后剩 ' + picked.length +
+            ' 个，开始抓取课表 ...');
 
-            var batchClasses = [];
-            var batchLessons = [];
+        if (picked.length === 0) {
+            finish();
+            post({
+                type: 'roomscan_done', ok: false,
+                error: '过滤后没有班级可扫描（年级 ' + grades.join('/') + ' 级）。'
+            });
+            return;
+        }
 
-            for (var mi = 0; mi < majors.length; mi++) {
-                if (stopped()) break;
-                var major = majors[mi];
-                var majorName = String(major.mc || major.dm).trim();
+        // 4. 学期开始日期（用第一个班级取第 1 周周一）
+        var semesterStartDate = await fetchFirstWeekStart(base, termCode, picked[0].value);
 
-                for (var grade = gradeFrom; grade <= gradeTo; grade++) {
-                    if (stopped()) break;
-                    var classes = [];
+        // 5. 并发抓取（worker 池共享任务队列；浏览器 HTTP/1.1 同域约 6 条并发）
+        var total = picked.length;
+        var results = new Array(total).fill(null);
+        var failed = [];
+        var hashCount = {};
+        var doneCount = 0;
+        var nextIdx = 0;
+
+        // 分批回传的累积区
+        var batchClasses = [];
+        var batchLessons = [];
+
+        function flushBatch(force) {
+            if (batchClasses.length === 0) return;
+            if (!force && batchClasses.length < BATCH_SIZE) return;
+            post({
+                type: 'roomscan_batch',
+                classes: batchClasses,
+                lessons: batchLessons
+            });
+            batchClasses = [];
+            batchLessons = [];
+        }
+
+        async function worker() {
+            while (!stopped()) {
+                var idx = nextIdx++;
+                if (idx >= total) return;
+                var cls = picked[idx];
+                var label = cls.text || cls.value;
+
+                var records = null;
+                var raw = '';
+                var lastErr = null;
+                for (var attempt = 0; attempt <= MAX_RETRY; attempt++) {
                     try {
-                        classes = await getFind(base, termCode, 'rxnf',
-                            college.value, String(major.dm), String(grade));
-                        missStreak = 0;
+                        var r = await fetchClassKbRaw(base, termCode, cls.value);
+                        records = r.records;
+                        raw = r.raw;
+                        lastErr = null;
+                        break;
                     } catch (e) {
-                        classes = [];
-                    }
-                    if (classes === null) {
-                        missStreak++;
-                        if (missStreak >= MAX_CASCADE_MISS) {
-                            finish();
-                            post({
-                                type: 'roomscan_done', ok: false,
-                                error: '级联查询连续无响应，登录会话可能已失效，请重新登录后再试'
-                            });
-                            return;
-                        }
-                        classes = [];
-                    }
-                    await sleep(GAP_MS);
-
-                    // 页面模式：同一 院系+专业+年级 只切一次级联
-                    if (mode === 'page' && classes.length > 0) {
-                        var groupKey = college.value + '|' + major.dm + '|' + grade;
-                        if (uiGroup !== groupKey) {
-                            var prepared = await prepareGroup(
-                                college.value, String(major.dm), String(grade));
-                            if (!prepared) {
-                                diag.pageFail += classes.length;
-                                for (var pf = 0; pf < classes.length; pf++) {
-                                    diag.failures.push({
-                                        cls: String(classes[pf].mc || classes[pf].dm),
-                                        reason: 'group-not-prepared'
-                                    });
-                                }
-                                totalClasses += classes.length;
-                                continue;
-                            }
-                            uiGroup = groupKey;
-                        }
-                    }
-
-                    for (var ki = 0; ki < classes.length; ki++) {
-                        if (stopped()) break;
-                        var cls = classes[ki];
-                        var classCode = String(cls.dm).trim();
-                        var classIdx = batchClasses.length;
-                        batchClasses.push({
-                            dm: classCode,
-                            mc: String(cls.mc || '').trim(),
-                            zy: String(major.dm).trim(),
-                            zymc: majorName,
-                            nf: grade
-                        });
-
-                        try {
-                            var parsed = mode === 'direct'
-                                ? await fetchClassTimetable(base, termCode, classCode)
-                                : await queryClassViaPage(classCode);
-                            if (parsed.lessons.length > 0) {
-                                if (mode === 'direct') diag.directOk++;
-                                else diag.pageOk++;
-                                for (var li = 0; li < parsed.lessons.length; li++) {
-                                    var L = parsed.lessons[li];
-                                    L.c = classIdx;
-                                    batchLessons.push(L);
-                                }
-                                totalCoarse += parsed.coarse;
-                            } else {
-                                if (mode === 'direct') diag.directFail++;
-                                else diag.pageFail++;
-                                if (diag.failures.length < 5) {
-                                    diag.failures.push({
-                                        cls: String(cls.mc || classCode),
-                                        reason: parsed.reason,
-                                        headers: parsed.headers
-                                    });
-                                }
-                            }
-                        } catch (e) {
-                            if (mode === 'direct') diag.directFail++;
-                            else diag.pageFail++;
-                            if (diag.failures.length < 5) {
-                                diag.failures.push({
-                                    cls: String(cls.mc || classCode),
-                                    reason: 'error:' + String(e && e.message || e)
-                                });
-                            }
-                        }
-                        totalClasses++;
-                        await sleep(GAP_MS);
+                        lastErr = e;
+                        await sleep(500);
                     }
                 }
-            }
 
-            totalLessons += batchLessons.length;
-            progress('已扫描 ' + (ci + 1) + '/' + colleges.length + ' 个学院：' +
-                totalClasses + ' 个班级，' + totalLessons + ' 条排课记录');
+                var classIdx = batchClasses.length;
+                var entry = {
+                    dm: cls.value,
+                    mc: label,
+                    nf: 2000 + parseInt(cls.grade, 10)
+                };
 
-            if (batchClasses.length > 0) {
-                post({
-                    type: 'roomscan_batch',
-                    college: collegeName,
-                    classes: batchClasses,
-                    lessons: batchLessons
-                });
+                if (lastErr) {
+                    failed.push({ bjdm: cls.value, name: label, reason: '请求异常: ' + lastErr.message });
+                } else if (records === null) {
+                    failed.push({ bjdm: cls.value, name: label, reason: '接口未返回有效数据' });
+                } else {
+                    var parsed = collectClassCourses(records);
+                    entry.lessons = parsed.lessons.length;
+                    results[idx] = entry;
+
+                    for (var li = 0; li < parsed.lessons.length; li++) {
+                        var L = parsed.lessons[li];
+                        batchLessons.push({
+                            c: classIdx,
+                            d: L.day,
+                            s: L.startSection,
+                            e: L.endSection,
+                            w: packWeeks(L.weeks),
+                            p: L.position,
+                            n: L.name
+                        });
+                    }
+                    batchClasses.push(entry);
+
+                    // 异常检测：不同班级返回同一份课表（bjdm 参数未生效）。
+                    // 只统计课程数 >= 3 的班级，避免无课班级/新生班误报。
+                    if (records.length >= 3) {
+                        var h = strHash(raw);
+                        hashCount[h] = (hashCount[h] || 0) + 1;
+                    }
+                }
+
+                doneCount++;
+                if (doneCount % BATCH_SIZE === 0 || doneCount === total) {
+                    flushBatch(false);
+                    progress('进度 ' + doneCount + '/' + total + '（失败 ' + failed.length + '）');
+                }
             }
-            await sleep(GAP_MS);
         }
+
+        var workerCount = Math.min(CONCURRENCY, total);
+        var workers = [];
+        for (var w = 0; w < workerCount; w++) workers.push(worker());
+        await Promise.all(workers);
+        flushBatch(true); // 收尾：把不足一批的余量发出去
 
         if (stopped()) {
             finish();
             post({ type: 'roomscan_done', ok: false, error: '已取消扫描' });
             return;
+        }
+
+        // 6. 汇总
+        var dupHash = null;
+        for (var key in hashCount) {
+            if (hashCount[key] >= 3) { dupHash = key; break; }
+        }
+        var lessonTotal = 0;
+        var withCourses = 0;
+        for (var ri = 0; ri < results.length; ri++) {
+            if (results[ri] && results[ri].lessons > 0) {
+                lessonTotal += results[ri].lessons;
+                withCourses++;
+            }
         }
 
         finish();
@@ -854,13 +759,23 @@
             ok: true,
             term: termCode,
             termName: termName,
-            gradeFrom: gradeFrom,
-            gradeTo: gradeTo,
-            classCount: totalClasses,
-            lessonCount: totalLessons,
-            coarseCount: totalCoarse,
+            semesterStartDate: semesterStartDate || '',
+            gradeFrom: gradeFromYear,
+            gradeTo: gradeToYear,
+            classCount: doneCount,
+            lessonCount: lessonTotal,
             elapsedSec: Math.round((Date.now() - t0) / 1000),
-            diag: diag
+            diag: {
+                source: classInfo.source,
+                discovered: classInfo.classes.length,
+                withCourses: withCourses,
+                emptyClasses: doneCount - withCourses,
+                failedCount: failed.length,
+                failedSample: failed.slice(0, 10),
+                duplicateWarning: dupHash
+                    ? '存在 ' + hashCount[dupHash] + ' 个班级返回完全相同的课表数据，请人工核对。'
+                    : ''
+            }
         });
     }
 

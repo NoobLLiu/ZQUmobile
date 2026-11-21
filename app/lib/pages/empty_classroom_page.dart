@@ -89,10 +89,11 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
 
   // ------------------------------------------------------------ 查询参数
 
-  /// 查询周次：优先用课表推算，退回手动选择。
+  /// 查询周次：优先用课表推算，退回扫描数据里的开学日期，再退回手动选择。
   int? get _effectiveWeek {
     final fromTimetable = _timetable?.weekOf(_selectedDate);
-    return fromTimetable ?? _manualWeek;
+    if (fromTimetable != null) return fromTimetable;
+    return _scan?.weekOf(_selectedDate) ?? _manualWeek;
   }
 
   int get _selectedDay => _selectedDate.weekday; // 周一=1 … 周日=7
@@ -300,13 +301,25 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
                   ),
               ],
             ),
-            if (_timetable == null || _timetable!.semesterStartDate.isEmpty)
+            // 周次推算来源提示
+            if (week != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                _timetable?.weekOf(_selectedDate) != null
+                    ? '周次由已导入课表推算'
+                    : '周次由教室数据自带的开学日期推算',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                ),
+              ),
+            ] else
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  '未导入课表，无法自动推算周次，请手动选择',
+                  '无法自动推算周次（未导入课表且教室数据无开学日期），请手动选择',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                    color: theme.colorScheme.error,
                   ),
                 ),
               ),

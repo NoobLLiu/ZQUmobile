@@ -266,16 +266,36 @@ void main() {
         ('1号教学楼101', _lesson(day: 1, s: 1, e: 2, weeks: [1, 2])),
         ('2号教学楼201', _lesson(day: 0, s: 1, e: 14, weeks: [3])),
       ]);
-      final restored = RoomScanData.fromJson(data.toJson());
+      final restored = RoomScanData.fromJson({
+        ...data.toJson(),
+        'semesterStartDate': '2026-08-31',
+      });
       expect(restored.term, '202601');
       expect(restored.termName, '2026-2027-1');
       expect(restored.gradeFrom, 2021);
       expect(restored.gradeTo, 2026);
       expect(restored.classCount, 2);
+      expect(restored.semesterStartDate, '2026-08-31');
       expect(restored.lessons.length, 2);
       expect(restored.positions, ['1号教学楼101', '2号教学楼201']);
       expect(restored.lessons.first.day, 1);
       expect(restored.lessons.last.day, 0);
+    });
+
+    test('weekOf 用扫描自带的开学日期推算周次', () {
+      final data = RoomScanData.fromJson({
+        ..._scanWith([]).toJson(),
+        'semesterStartDate': '2026-08-31', // 周一
+      });
+      // 开学当天是第 1 周；一周后是第 2 周；往前往后超出范围返回 null
+      expect(data.weekOf(DateTime(2026, 8, 31)), 1);
+      expect(data.weekOf(DateTime(2026, 9, 6)), 1);
+      expect(data.weekOf(DateTime(2026, 9, 7)), 2);
+      expect(data.weekOf(DateTime(2026, 8, 30)), isNull);
+      expect(
+        RoomScanData.fromJson(_scanWith([]).toJson()).weekOf(DateTime(2026, 9, 1)),
+        isNull,
+      );
     });
 
     test('构建器对地点与课程名去重', () {
@@ -291,10 +311,12 @@ void main() {
         termName: '2026-2027-1',
         gradeFrom: 2021,
         gradeTo: 2026,
+        semesterStartDate: '2026-08-31',
       );
       expect(data.positions.length, 1);
       expect(data.courseNames.length, 1);
       expect(data.lessons.length, 2);
+      expect(data.semesterStartDate, '2026-08-31');
       expect(data.lessons[0].positionIndex, 0);
       expect(data.lessons[1].positionIndex, 0);
     });
