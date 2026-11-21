@@ -1,10 +1,18 @@
 // ============================================================================
-// 班级课表扫描脚本（空教室功能的数据采集端）。
+// 班级课表扫描脚本（空教室功能的数据采集端）v2。
 //
 // 数据来源（教务系统「班级课表」模块，需已登录）：
-//   页面    GET  xsbjkbcx!xsbjkbMain.action            学期/院系下拉框
+//   页面    GET  xsbjkbcx!xsbjkbMain.action            筛选表单 + 课表 iframe
 //   级联    POST xsbjkbcx!getFind.action               院系→专业→班级
 //   课表    GET  xsbjkbcx!xskbList.action?xnxqdm&bjdm&zc  班级课表 HTML
+//
+// 取课表的两条路（自动择优）：
+//   A 直连模式：从班级课表页面上下文直接 GET xskbList（与手动查询的
+//     Referer/会话一致），解析响应 HTML。速度最快，每班一个请求。
+//   B 页面模式：直连探测失败时退化为模拟操作 —— 在班级课表页上依次
+//     设置 院系/专业/年级/班级 下拉并触发查询，等课表 iframe 刷出后
+//     直接读 iframe 里的 DOM。同院系+专业+年级只切一次级联，逐班只
+//     换班级下拉 + 点查询。
 //
 // 遍历规则：年级取 [当前年份-5, 当前年份]（如 2026 → 2021..2026）；
 // 学院无专业、专业无班级属正常现象，getFind 返回 [] 直接跳过。
@@ -12,13 +20,10 @@
 // 回传协议（经 window.zsyBridge 发给 Flutter）：
 //   {type:'roomscan_progress', message}                       进度
 //   {type:'roomscan_batch', classes:[...], lessons:[...]}     每个学院一批
-//   {type:'roomscan_done', ok:true, term, termName, ...}      完成
+//   {type:'roomscan_done', ok:true, term, ..., diag:{...}}    完成（带诊断）
 //   {type:'roomscan_done', ok:false, error}                   失败
 //
-// batch.classes 为该学院扫到的班级数组；lessons 里的 c 字段是
-// classes 数组下标。w 为压缩周次串（"1-8,10-17"）。
-//
-// 由 App 以 IIFE 包裹注入（见 jwgl_adapter_repository），可重复注入。
+// 由 App 在页面加载完成后注入（见 jwgl_login_page.dart），可重复注入。
 // ============================================================================
 
 (function () {
@@ -43,6 +48,10 @@
     var GAP_MS = 30;
     // 连续解析失败的级联请求上限（超过视为会话失效）
     var MAX_CASCADE_MISS = 3;
+    // 跳转进班级课表页的最大尝试次数（sessionStorage 计数，防死循环）
+    var MAX_NAV_ATTEMPTS = 3;
+    // 直连探测的班级数：前几个班都取不到课表才切页面模式
+    var PROBE_COUNT = 3;
 
     // ---------------------------------------------------------------- 工具
 
@@ -63,6 +72,19 @@
 
     function sleep(ms) {
         return new Promise(function (r) { setTimeout(r, ms); });
+    }
+
+    /** 轮询等待条件成立；超时返回 null。 */
+    async function waitFor(fn, timeoutMs, stepMs) {
+        var t0 = Date.now();
+        while (Date.now() - t0 < timeoutMs) {
+            if (stopped()) return null;
+            var ok = false;
+            try { ok = fn(); } catch (e) { ok = false; }
+            if (ok) return true;
+            await sleep(stepMs || 200);
+        }
+        return null;
     }
 
     /**
@@ -122,8 +144,8 @@
     }
 
     /**
-     * 解析周次文本，兼容 "1-8,10-17周" / "1,3,5周" / "1111111100000000"
-     * 位串 / "1-16(单)" 等写法（与拾光适配脚本同一套规则）。
+     * 解析周次文本，兼容 "1-8,10-17周" / "第1-16周" / "1,3,5周" /
+     * "1111111100000000" 位串 / "1-16(单)" 等写法。
      */
     function parseWeekText(zc) {
         var txt = String(zc === null || zc === undefined ? '' : zc).trim();
@@ -136,7 +158,7 @@
             return bits;
         }
         var cleaned = txt
-            .replace(/周|星期/g, '')
+            .replace(/第|周|星期/g, '')
             .replace(/[（(][^）)]*[）)]/g, '')
             .replace(/[单双]/g, '');
         var out = [];
@@ -204,7 +226,6 @@
             if (d && out.indexOf(d) === -1) out.push(d);
         }
         if (out.length === 0) {
-            // 纯数字（可能逗号分隔多天）
             var nums = s.match(/[1-7]/g) || [];
             for (var i = 0; i < nums.length; i++) {
                 var n = parseInt(nums[i], 10);
@@ -214,66 +235,23 @@
         return out.sort(function (x, y) { return x - y; });
     }
 
-    // ---------------------------------------------------------------- 数据获取
-
-    function fetchDoc(url) {
-        return fetch(url, { method: 'GET', credentials: 'include' })
-            .then(function (resp) {
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                return resp.text();
-            })
-            .then(function (html) {
-                return new DOMParser().parseFromString(html, 'text/html');
-            });
-    }
+    // ---------------------------------------------------------------- 解析
 
     /**
-     * 级联查询接口。返回 [{dm, mc}, ...]，空组合返回 []。
-     * 响应体形如 "<guid>^getFind:[...]"，未登录时返回 HTML。
-     */
-    async function getFind(base, termCode, guid, xsyxdm, zydm, rxnf) {
-        var body = new URLSearchParams({
-            guid: guid,
-            xnxqdm: termCode,
-            xqdm: '',
-            rxnf: rxnf || '',
-            xsyxdm: xsyxdm || '',
-            zydm: zydm || ''
-        }).toString();
-        var resp = await fetch(base + FIND_API, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: body
-        });
-        if (!resp.ok) throw new Error('级联查询 HTTP ' + resp.status);
-        var text = await resp.text();
-        var i = text.indexOf('^getFind:');
-        if (i < 0) return null; // 不是级联响应（多为登录页 HTML）
-        var arr = JSON.parse(text.slice(i + 9));
-        if (!Array.isArray(arr)) return [];
-        return arr.filter(function (x) {
-            return x && x.dm !== undefined && String(x.dm).trim() !== '';
-        });
-    }
-
-    /**
-     * 从班级课表 HTML 中解析「上课信息」列表。
+     * 从课表文档（HTML 字符串解析结果或 iframe contentDocument）中
+     * 解析「上课信息」列表。
      *
      * 列头按文本匹配列含义；缺星期/节次列时退化为「整天占用」
      * （d=0、s=1..e=14），由 App 端按保守策略处理。
      *
-     * @returns {{lessons: Array, coarse: number, rows: number}}
-     *   lessons: {d,s,e,w(压缩串),p(地点),n(课程名)}
+     * @returns {{lessons: Array, coarse: number, rows: number,
+     *            headers: Array, reason: string}}
      */
-    function parseClassTimetable(html, fallbackWeek) {
-        var doc = new DOMParser().parseFromString(html, 'text/html');
+    function parseTimetableDoc(doc, requestedWeek) {
         var tables = doc.querySelectorAll('table');
         var best = null;
         var bestScore = 0;
+        var firstHeaders = [];
 
         for (var t = 0; t < tables.length; t++) {
             var tb = tables[t];
@@ -288,6 +266,8 @@
             for (var h = 0; h < headCells.length; h++) {
                 heads.push(String(headCells[h].textContent || '').trim());
             }
+            if (firstHeaders.length === 0) firstHeaders = heads.slice(0, 12);
+
             var score = 0;
             var cols = {};
             for (var i = 0; i < heads.length; i++) {
@@ -306,12 +286,17 @@
                 else if (txt.indexOf('教师') !== -1) { cols.teacher = i; score += 1; }
                 else if (txt.indexOf('课程') !== -1) { cols.name = i; score += 1; }
             }
-            // 认定是列表的最低标准：有地点列 + 至少还有一个其他关键列
+            // 认定是上课列表的最低标准：有地点列 + 至少还有一个其他关键列
             if (cols.position === undefined || score < 4) continue;
             if (score > bestScore) { bestScore = score; best = { cols: cols, table: tb }; }
         }
 
-        if (!best) return { lessons: [], coarse: 0, rows: 0, reason: 'no-table' };
+        if (!best) {
+            return {
+                lessons: [], coarse: 0, rows: tables.length,
+                headers: firstHeaders, reason: 'no-table'
+            };
+        }
 
         var cols = best.cols;
         var rows = best.table.querySelectorAll('tr');
@@ -372,9 +357,53 @@
             seen[key] = true;
             uniq.push(L);
         }
-        return { lessons: uniq, coarse: coarse, rows: rows.length - 1 };
+        return {
+            lessons: uniq, coarse: coarse, rows: rows.length - 1,
+            headers: firstHeaders, reason: uniq.length > 0 ? 'ok' : 'no-rows'
+        };
     }
 
+    function parseClassTimetable(html, requestedWeek) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        return parseTimetableDoc(doc, requestedWeek);
+    }
+
+    // ---------------------------------------------------------------- 直连模式
+
+    /**
+     * 级联查询接口。返回 [{dm, mc}, ...]，空组合返回 []。
+     * 响应体形如 "<guid>^getFind:[...]"，未登录时返回 HTML。
+     */
+    async function getFind(base, termCode, guid, xsyxdm, zydm, rxnf) {
+        var body = new URLSearchParams({
+            guid: guid,
+            xnxqdm: termCode,
+            xqdm: '',
+            rxnf: rxnf || '',
+            xsyxdm: xsyxdm || '',
+            zydm: zydm || ''
+        }).toString();
+        var resp = await fetch(base + FIND_API, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: body
+        });
+        if (!resp.ok) throw new Error('级联查询 HTTP ' + resp.status);
+        var text = await resp.text();
+        var i = text.indexOf('^getFind:');
+        if (i < 0) return null; // 不是级联响应（多为登录页 HTML）
+        var arr = JSON.parse(text.slice(i + 9));
+        if (!Array.isArray(arr)) return [];
+        return arr.filter(function (x) {
+            return x && x.dm !== undefined && String(x.dm).trim() !== '';
+        });
+    }
+
+    /** 直连请求某班的课表 HTML 并解析。 */
     async function fetchClassTimetable(base, termCode, classCode) {
         var url = base + KB_API +
             '?xnxqdm=' + encodeURIComponent(termCode) +
@@ -382,7 +411,142 @@
             '&zc=1';
         var resp = await fetch(url, { method: 'GET', credentials: 'include' });
         if (!resp.ok) throw new Error('课表请求 HTTP ' + resp.status);
-        return parseClassTimetable(await resp.text(), 1);
+        var html = await resp.text();
+        var parsed = parseClassTimetable(html, 1);
+        parsed.htmlLen = html.length;
+        return parsed;
+    }
+
+    // ---------------------------------------------------------------- 页面模式
+
+    function el(id) {
+        return document.querySelector('#' + id);
+    }
+
+    function setSelect(sel, value) {
+        if (!sel || !sel.options) return false;
+        for (var i = 0; i < sel.options.length; i++) {
+            if (String(sel.options[i].value) === String(value)) {
+                sel.value = String(value);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function fireChange(sel) {
+        if (!sel) return;
+        try {
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch (e) { /* 忽略 */ }
+    }
+
+    function findQueryButton() {
+        var nodes = document.querySelectorAll(
+            'input[type=button],input[type=submit],button,a.btn,a');
+        for (var i = 0; i < nodes.length; i++) {
+            var t = String(nodes[i].value || nodes[i].textContent || '').trim();
+            if (t.indexOf('查询') !== -1 || t.indexOf('查 询') !== -1) {
+                return nodes[i];
+            }
+        }
+        return null;
+    }
+
+    function findTimetableFrame() {
+        var frames = document.querySelectorAll('iframe');
+        for (var i = 0; i < frames.length; i++) {
+            var src = String(frames[i].getAttribute('src') || '');
+            if (src.indexOf('xskb') !== -1) return frames[i];
+        }
+        return frames.length > 0 ? frames[0] : null;
+    }
+
+    function frameSignature(frame) {
+        try {
+            var doc = frame.contentDocument;
+            if (!doc || !doc.body) return '';
+            return String(frame.src || '') + '#' + doc.body.innerText.length;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    /**
+     * 页面模式取某班的课表：设置班级下拉 → 触发查询 → 等课表刷新 → 读 iframe。
+     * 调用前需先用 prepareGroup 把 院系/专业/年级 级联到位。
+     */
+    async function queryClassViaPage(classCode) {
+        var bj = el('bjdm');
+        if (!bj) return { lessons: [], reason: 'no-bjdm-select', headers: [] };
+        if (!setSelect(bj, classCode)) {
+            return { lessons: [], reason: 'bjdm-option-missing', headers: [] };
+        }
+
+        var frame = findTimetableFrame();
+        var sigBefore = frame ? frameSignature(frame) : '';
+
+        fireChange(bj);
+        var btn = findQueryButton();
+        if (btn) {
+            try { btn.click(); } catch (e) { /* 忽略 */ }
+        }
+
+        // 等课表刷新：签名变化，或（首次查询）出现非空内容
+        await waitFor(function () {
+            var f = findTimetableFrame();
+            if (!f) return false;
+            var sig = frameSignature(f);
+            if (!sig) return false;
+            return sig !== sigBefore || sigBefore === '';
+        }, 15000, 300);
+
+        await sleep(300); // 等 DOM 稳定
+        var f2 = findTimetableFrame();
+        if (!f2 || !f2.contentDocument || !f2.contentDocument.body) {
+            return { lessons: [], reason: 'no-frame-doc', headers: [] };
+        }
+        var parsed = parseTimetableDoc(f2.contentDocument, 1);
+        parsed.reason = parsed.lessons.length > 0 ? 'ok' : parsed.reason;
+        return parsed;
+    }
+
+    /**
+     * 把 院系/专业/年级 级联切到位（同一组合只切一次）。
+     * 依赖页面自身的 change 处理填充下级下拉。
+     */
+    async function prepareGroup(xsyxdm, zydm, nf) {
+        var yx = el('xsyxdm');
+        if (!yx) return false;
+
+        if (String(yx.value) !== String(xsyxdm)) {
+            if (!setSelect(yx, xsyxdm)) return false;
+            fireChange(yx);
+            var filled = await waitFor(function () {
+                var zy = el('zydm');
+                return zy && Array.from(zy.options).some(function (o) {
+                    return String(o.value) === String(zydm);
+                });
+            }, 10000, 250);
+            if (!filled) return false;
+        }
+
+        var zy = el('zydm');
+        if (!zy || !setSelect(zy, zydm)) return false;
+        fireChange(zy);
+
+        var nfSel = el('rxnf');
+        if (nfSel) {
+            if (!setSelect(nfSel, nf)) return false;
+            fireChange(nfSel);
+        }
+
+        // 等班级下拉填充（页面按 yx+zy+nf 调 getFind）
+        var ok = await waitFor(function () {
+            var bj = el('bjdm');
+            return bj && bj.options.length > 1;
+        }, 8000, 250);
+        return ok != null;
     }
 
     // ---------------------------------------------------------------- 主流程
@@ -405,18 +569,29 @@
         var t0 = Date.now();
         var base = siteBase();
 
-        // 1. 班级课表页面：取学期与院系下拉
-        progress('正在打开班级课表页面 ...');
-        var doc;
-        try {
-            doc = await fetchDoc(base + MAIN_PAGE);
-        } catch (e) {
-            finish();
-            post({ type: 'roomscan_done', ok: false, error: '无法打开班级课表页：' + e.message });
-            return;
+        // 0. 必须停在班级课表页：不在就跳过去，页面加载完成后 App 会重新注入
+        if (String(window.location.href).indexOf('xsbjkbcx!') === -1) {
+            var navKey = 'zsyRoomScanNav';
+            var navCount = parseInt(sessionStorage.getItem(navKey) || '0', 10) + 1;
+            sessionStorage.setItem(navKey, String(navCount));
+            if (navCount > MAX_NAV_ATTEMPTS) {
+                sessionStorage.removeItem(navKey);
+                finish();
+                post({
+                    type: 'roomscan_done', ok: false,
+                    error: '多次尝试进入班级课表页失败。请先在教务系统里打开'
+                         + '「信息查询 → 班级课表」，再点扫描。'
+                });
+                return;
+            }
+            progress('正在进入班级课表页面（' + navCount + '/' + MAX_NAV_ATTEMPTS + '）...');
+            window.location.href = base + MAIN_PAGE;
+            return; // 跳转后脚本随页面重载，由 App 重新注入
         }
+        sessionStorage.removeItem('zsyRoomScanNav');
 
-        var termSel = readSelectOptions(doc, 'xnxqdm');
+        // 1. 从页面下拉框取学期与院系（live DOM）
+        var termSel = readSelectOptions(document, 'xnxqdm');
         if (!termSel) {
             finish();
             post({ type: 'roomscan_done', ok: false, error: '未找到学期下拉框，请确认已登录教务系统' });
@@ -428,7 +603,6 @@
             if (termSel.opts[ti].value === termCode) termName = termSel.opts[ti].text;
         }
         if (!termCode) {
-            // 兜底：取最后一个选项（通常是最新的学期）
             var withValue = termSel.opts.filter(function (o) { return o.value; });
             if (withValue.length === 0) {
                 finish();
@@ -439,7 +613,7 @@
             termName = withValue[withValue.length - 1].text;
         }
 
-        var collegeSel = readSelectOptions(doc, 'xsyxdm');
+        var collegeSel = readSelectOptions(document, 'xsyxdm');
         if (!collegeSel) {
             finish();
             post({ type: 'roomscan_done', ok: false, error: '未找到院系下拉框，请确认页面为班级课表' });
@@ -460,12 +634,65 @@
         progress('学期 ' + termName + '（' + termCode + '），共 ' + colleges.length +
             ' 个学院，年级 ' + gradeFrom + '-' + gradeTo);
 
-        // 3. 遍历：院系 → 专业 → 年级 → 班级 → 课表
+        // 3. 探测：用第一个班的课表决定走直连还是页面模式
+        var mode = 'direct'; // direct | page
+        var diag = {
+            mode: '',
+            probe: null,
+            directOk: 0, directFail: 0,
+            pageOk: 0, pageFail: 0,
+            failures: []
+        };
+
+        var firstClasses = null;
+        try {
+            var c0 = colleges[0];
+            var majors0 = await getFind(base, termCode, 'xsyxdm', c0.value, '', '');
+            await sleep(GAP_MS);
+            if (majors0 && majors0.length > 0) {
+                for (var g0 = gradeFrom; g0 <= gradeTo && !firstClasses; g0++) {
+                    var cls0 = await getFind(base, termCode, 'rxnf',
+                        c0.value, String(majors0[0].dm), String(g0));
+                    await sleep(GAP_MS);
+                    if (cls0 && cls0.length > 0) {
+                        firstClasses = { college: c0, major: majors0[0], grade: g0, list: cls0 };
+                    }
+                }
+            }
+        } catch (e) { /* 探测失败不阻塞，后面正常走 */ }
+
+        if (firstClasses) {
+            progress('正在探测课表获取方式 ...');
+            try {
+                var probe = await fetchClassTimetable(base, termCode,
+                    String(firstClasses.list[0].dm).trim());
+                diag.probe = {
+                    status: 'fetched',
+                    htmlLen: probe.htmlLen,
+                    tables: probe.rows,
+                    headers: probe.headers,
+                    lessons: probe.lessons.length,
+                    reason: probe.reason
+                };
+                mode = probe.lessons.length > 0 ? 'direct' : 'page';
+            } catch (e) {
+                diag.probe = { status: 'error', error: String(e && e.message || e) };
+                mode = 'page';
+            }
+        } else {
+            diag.probe = { status: 'no-class' };
+        }
+        diag.mode = mode;
+        progress(mode === 'direct'
+            ? '直连接口可用，开始全量扫描 ...'
+            : '直连接口取不到课表，改用页面模式（模拟切换班级查询，速度较慢）...');
+
+        // 4. 遍历：院系 → 专业 → 年级 → 班级 → 课表
         var totalClasses = 0;
         var totalLessons = 0;
         var totalCoarse = 0;
         var missStreak = 0;
-        var badClasses = 0;
+        var uiGroup = ''; // 页面模式下当前级联位置，避免重复切换
 
         for (var ci = 0; ci < colleges.length; ci++) {
             if (stopped()) break;
@@ -526,12 +753,34 @@
                     }
                     await sleep(GAP_MS);
 
+                    // 页面模式：同一 院系+专业+年级 只切一次级联
+                    if (mode === 'page' && classes.length > 0) {
+                        var groupKey = college.value + '|' + major.dm + '|' + grade;
+                        if (uiGroup !== groupKey) {
+                            var prepared = await prepareGroup(
+                                college.value, String(major.dm), String(grade));
+                            if (!prepared) {
+                                diag.pageFail += classes.length;
+                                for (var pf = 0; pf < classes.length; pf++) {
+                                    diag.failures.push({
+                                        cls: String(classes[pf].mc || classes[pf].dm),
+                                        reason: 'group-not-prepared'
+                                    });
+                                }
+                                totalClasses += classes.length;
+                                continue;
+                            }
+                            uiGroup = groupKey;
+                        }
+                    }
+
                     for (var ki = 0; ki < classes.length; ki++) {
                         if (stopped()) break;
                         var cls = classes[ki];
+                        var classCode = String(cls.dm).trim();
                         var classIdx = batchClasses.length;
                         batchClasses.push({
-                            dm: String(cls.dm).trim(),
+                            dm: classCode,
                             mc: String(cls.mc || '').trim(),
                             zy: String(major.dm).trim(),
                             zymc: majorName,
@@ -539,16 +788,38 @@
                         });
 
                         try {
-                            var parsed = await fetchClassTimetable(base, termCode, String(cls.dm).trim());
-                            if (parsed.reason === 'no-table') badClasses++;
-                            for (var li = 0; li < parsed.lessons.length; li++) {
-                                var L = parsed.lessons[li];
-                                L.c = classIdx;
-                                batchLessons.push(L);
+                            var parsed = mode === 'direct'
+                                ? await fetchClassTimetable(base, termCode, classCode)
+                                : await queryClassViaPage(classCode);
+                            if (parsed.lessons.length > 0) {
+                                if (mode === 'direct') diag.directOk++;
+                                else diag.pageOk++;
+                                for (var li = 0; li < parsed.lessons.length; li++) {
+                                    var L = parsed.lessons[li];
+                                    L.c = classIdx;
+                                    batchLessons.push(L);
+                                }
+                                totalCoarse += parsed.coarse;
+                            } else {
+                                if (mode === 'direct') diag.directFail++;
+                                else diag.pageFail++;
+                                if (diag.failures.length < 5) {
+                                    diag.failures.push({
+                                        cls: String(cls.mc || classCode),
+                                        reason: parsed.reason,
+                                        headers: parsed.headers
+                                    });
+                                }
                             }
-                            totalCoarse += parsed.coarse;
                         } catch (e) {
-                            badClasses++;
+                            if (mode === 'direct') diag.directFail++;
+                            else diag.pageFail++;
+                            if (diag.failures.length < 5) {
+                                diag.failures.push({
+                                    cls: String(cls.mc || classCode),
+                                    reason: 'error:' + String(e && e.message || e)
+                                });
+                            }
                         }
                         totalClasses++;
                         await sleep(GAP_MS);
@@ -588,8 +859,8 @@
             classCount: totalClasses,
             lessonCount: totalLessons,
             coarseCount: totalCoarse,
-            badClassCount: badClasses,
-            elapsedSec: Math.round((Date.now() - t0) / 1000)
+            elapsedSec: Math.round((Date.now() - t0) / 1000),
+            diag: diag
         });
     }
 

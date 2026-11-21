@@ -83,6 +83,9 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   /// 扫描是否仍在进行（用于离开页面时通知脚本停下）。
   bool _scanRunning = false;
 
+  /// 扫描已启动（含页面跳转后的重新注入阶段）。
+  bool _scanActive = false;
+
   /// WebVPN 滑块验证码自动求解脚本。
   String? _captchaSolverJs;
 
@@ -194,6 +197,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
         'window.__zsyRoomScan && window.__zsyRoomScan.stop();',
       );
     }
+    _scanActive = false;
     super.dispose();
   }
 
@@ -249,6 +253,10 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
             // 每次页面加载完成：挂滑块求解器，再跑一遍自动登录编排
             _injectCaptchaSolver();
             _startAutoLogin();
+            // 扫描过程中页面跳转（如脚本自动进入班级课表页）后重新注入
+            if (widget.roomScan && _scanActive) {
+              _reinjectRoomScanIfNeeded();
+            }
           },
           onWebResourceError: (err) {
             if (!mounted) return;
@@ -284,8 +292,10 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     if (!mounted) return;
     setState(() {
       _fetching = false;
+      _scanRunning = false;
+      _scanActive = false;
       _error = message;
-      _status = '导入失败';
+      _status = widget._scanMode ? '扫描失败' : '导入失败';
     });
   }
 
@@ -443,12 +453,21 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   /// 扫描完成：组装数据落库并返回。
   Future<void> _finalizeRoomScan(Map<String, dynamic> j) async {
     _scanRunning = false;
+    _scanActive = false;
     if (j['ok'] != true) {
       _fail((j['error'] ?? '扫描失败').toString());
       return;
     }
     if (_scanBuilder.lessonCount == 0) {
-      _fail('扫描完成，但没有收到排课数据。\n请确认已登录教务系统后重试。');
+      // 带上诊断信息，便于定位“扫到班级但取不到课表”的问题
+      var diagText = '';
+      try {
+        final diag = jsonEncode(j['diag'] ?? {});
+        if (diag.length > 2) {
+          diagText = '\n诊断：${diag.substring(0, diag.length > 400 ? 400 : diag.length)}';
+        }
+      } catch (_) {}
+      _fail('扫描完成，但没有收到排课数据。\n请确认已登录教务系统后重试。$diagText');
       return;
     }
 
@@ -1001,6 +1020,30 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     );
   }
 
+  /// 扫描过程中页面跳转后重新注入扫描脚本。
+  ///
+  /// 脚本开头会判断当前是否停在班级课表页，不在则自行跳转；
+  /// 跳转后的新页面上由这里重新注入。脚本防重入的 running 标记
+  /// 保证同一页面不会跑两轮。
+  Future<void> _reinjectRoomScanIfNeeded() async {
+    final c = _controller;
+    final js = _roomScanJs;
+    if (c == null || js == null) return;
+    try {
+      final running = await c.runJavaScriptReturningResult(
+        '!!(window.__zsyRoomScan && window.__zsyRoomScan.running);',
+      );
+      if (running == true) return; // 本页已在跑，不重复注入
+    } catch (_) {
+      /* 查询失败按未运行处理 */
+    }
+    try {
+      await c.runJavaScript(js);
+    } catch (_) {
+      /* 页面尚未就绪时忽略 */
+    }
+  }
+
   /// 点「扫描教室」：注入班级课表扫描脚本。
   ///
   /// 脚本会遍历全部学院/专业/年级/班级抓取上课地点，耗时几分钟，
@@ -1014,6 +1057,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
     final token = ++_fetchToken;
     _scanBuilder = RoomScanBuilder();
+    _scanActive = true;
 
     setState(() {
       _fetching = true;
@@ -1030,8 +1074,8 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       return;
     }
 
-    // 兑底：20 秒内没有任何回传，说明脚本没跑起来
-    await Future.delayed(const Duration(seconds: 20));
+    // 兑底：25 秒内没有任何回传，说明脚本没跑起来
+    await Future.delayed(const Duration(seconds: 25));
     if (!mounted || token != _fetchToken || !_fetching) return;
     _fail(
       '没有收到教务系统的响应。\n请确认：① 已登录教务系统；'
