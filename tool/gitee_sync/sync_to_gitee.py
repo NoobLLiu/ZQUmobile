@@ -301,8 +301,11 @@ def main():
     with open(raw_meta, encoding="utf-8") as f:
         meta = json.load(f)
     apks = [a for a in meta.get("assets", []) if a["name"].endswith(".apk")]
-    if len(apks) != 3:
-        raise RuntimeError(f"版本清单里应有 3 个 APK，实际 {len(apks)} 个")
+    # 国内链路慢：Gitee 镜像只放 arm64-v8a（绝大多数手机），
+    # armeabi-v7a / x86_64 请从 GitHub Release 下载。
+    apks = [a for a in apks if "arm64-v8a" in a["name"]]
+    if not apks:
+        raise RuntimeError("版本清单里没有 arm64-v8a APK")
     full = meta["fullVersion"]
     log(f"  版本 {full}（versionCode {meta['versionCode']}，{meta['buildTime']}）")
 
@@ -316,6 +319,11 @@ def main():
 
     log("\n[4/6] 生成 Gitee 版 version.json")
     gitee_meta = json.loads(json.dumps(meta))
+    # version.json 里也只保留 arm64-v8a，与实际附件保持一致
+    gitee_meta["assets"] = [a for a in gitee_meta.get("assets", [])
+                            if "arm64-v8a" in a.get("name", "")
+                            or a.get("name") == "version.json"
+                            or not a.get("name", "").endswith(".apk")]
     for a in gitee_meta.get("assets", []):
         a["upstreamUrl"] = a["url"]
         a["url"] = f"{GITEE_BASE}/{a['name']}"
