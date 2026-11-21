@@ -693,29 +693,37 @@
                 } else if (records === null) {
                     failed.push({ bjdm: cls.value, name: label, reason: '接口未返回有效数据' });
                 } else {
-                    var parsed = collectClassCourses(records);
-                    entry.lessons = parsed.lessons.length;
-                    results[idx] = entry;
+                    try {
+                        var parsed = collectClassCourses(records);
+                        entry.lessons = parsed.courses.length;
+                        results[idx] = entry;
 
-                    for (var li = 0; li < parsed.lessons.length; li++) {
-                        var L = parsed.lessons[li];
-                        batchLessons.push({
-                            c: classIdx,
-                            d: L.day,
-                            s: L.startSection,
-                            e: L.endSection,
-                            w: packWeeks(L.weeks),
-                            p: L.position,
-                            n: L.name
+                        for (var li = 0; li < parsed.courses.length; li++) {
+                            var L = parsed.courses[li];
+                            batchLessons.push({
+                                c: classIdx,
+                                d: L.day,
+                                s: L.startSection,
+                                e: L.endSection,
+                                w: packWeeks(L.weeks),
+                                p: L.position,
+                                n: L.name
+                            });
+                        }
+                        batchClasses.push(entry);
+
+                        // 异常检测：不同班级返回同一份课表（bjdm 参数未生效）。
+                        // 只统计课程数 >= 3 的班级，避免无课班级/新生班误报。
+                        if (records.length >= 3) {
+                            var h = strHash(raw);
+                            hashCount[h] = (hashCount[h] || 0) + 1;
+                        }
+                    } catch (parseErr) {
+                        failed.push({
+                            bjdm: cls.value,
+                            name: label,
+                            reason: '解析异常: ' + (parseErr && parseErr.message || parseErr)
                         });
-                    }
-                    batchClasses.push(entry);
-
-                    // 异常检测：不同班级返回同一份课表（bjdm 参数未生效）。
-                    // 只统计课程数 >= 3 的班级，避免无课班级/新生班误报。
-                    if (records.length >= 3) {
-                        var h = strHash(raw);
-                        hashCount[h] = (hashCount[h] || 0) + 1;
                     }
                 }
 
