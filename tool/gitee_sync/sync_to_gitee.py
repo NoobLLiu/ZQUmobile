@@ -65,9 +65,15 @@ def curl_path():
     return found
 
 
+# Windows 系统自带 curl 用 schannel，默认会做证书吊销检查；
+# 走代理时 CRL/OCSP 常被挡（CRYPT_E_NO_REVOCATION_CHECK），
+# --ssl-no-revoke 改为尽力而为，curl 7.71+ 支持。
+CURL_TLS_FLAGS = ["--ssl-no-revoke"] if os.name == "nt" else []
+
+
 def api(args, timeout=180):
     cmd = [curl_path(), "-sS", "--show-error", "--fail-with-body",
-           "--max-time", str(timeout)] + args
+           "--max-time", str(timeout)] + CURL_TLS_FLAGS + args
     done = subprocess.run(cmd, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     if done.returncode:
@@ -79,7 +85,7 @@ def api(args, timeout=180):
 def api_with_status(args, timeout=180):
     """同 api()，但保留 HTTP 状态码（404 也算正常结果，用来判断文件是否存在）。"""
     cmd = [curl_path(), "-sS", "--show-error", "--max-time", str(timeout),
-           "-w", "\n__ZSY_HTTP_STATUS__%{http_code}"] + args
+           "-w", "\n__ZSY_HTTP_STATUS__%{http_code}"] + CURL_TLS_FLAGS + args
     done = subprocess.run(cmd, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     if done.returncode:
@@ -179,7 +185,7 @@ def sync_data_file(token):
 
 def http_get_json(url):
     cmd = [curl_path(), "-sS", "--show-error", "--fail-with-body",
-           "--max-time", "120", "-L", url]
+           "--max-time", "120", "-L"] + CURL_TLS_FLAGS + [url]
     done = subprocess.run(cmd, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     if done.returncode:
@@ -210,7 +216,7 @@ def download_asset(asset_id, path, sha=None):
         cmd = [curl_path(), "-L", "--fail", "--retry", "3",
                "--retry-all-errors", "--retry-delay", "3",
                "--connect-timeout", "20", "--max-time", "1800",
-               "-H", "Accept: application/octet-stream"]
+               "-H", "Accept: application/octet-stream"] + CURL_TLS_FLAGS
         if resume:
             cmd += ["-C", "-"]
             log(f"  续传 {name}（已有 {os.path.getsize(tmp) / 1048576:.1f} MB）")
@@ -233,7 +239,7 @@ def upload(token, rid, path, name):
     cmd = [curl_path(), "-sS", "--show-error", "--fail-with-body",
            "--max-time", "600", "-X", "POST",
            f"{API}/releases/{rid}/attach_files?access_token={token}",
-           "-F", f"file=@{path};filename={name}", "-o", os.devnull]
+           "-F", f"file=@{path};filename={name}", "-o", os.devnull] + CURL_TLS_FLAGS
     done = subprocess.run(cmd, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     if done.returncode:
