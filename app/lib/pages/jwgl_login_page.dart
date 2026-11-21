@@ -25,6 +25,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../models/empty_classroom.dart';
 import '../models/profile.dart';
 import '../models/timetable.dart';
 import '../services/captcha_ocr.dart';
@@ -32,22 +33,36 @@ import '../services/captcha_templates.dart';
 import '../services/jwgl_adapter_repository.dart';
 import '../services/profile_repository.dart';
 import '../services/jwgl_service.dart';
+import '../services/room_scan_repository.dart';
 import '../services/timetable_repository.dart';
 import '../widgets/conflict_dialog.dart';
 
 /// 教务系统页面。
 ///
-/// 两种用法：
-///   - 纯登录（[allowImport] = false）：从功能页「教务系统」进入，
+/// 三种用法：
+///   - 纯登录（默认）：从功能页「教务系统」进入，
 ///     只做快捷访问与自动登录，不提供导入功能；
 ///   - 导入模式（[allowImport] = true）：从课表页进入，
-///     底部提供「执行导入」抓取课表。
+///     底部提供「执行导入」抓取课表；
+///   - 扫描模式（[roomScan] = true）：从空教室页进入，
+///     底部提供「扫描教室」遍历班级课表采集上课地点。
 class JwglLoginPage extends StatefulWidget {
-  const JwglLoginPage({super.key, this.allowImport = false});
+  const JwglLoginPage({
+    super.key,
+    this.allowImport = false,
+    this.roomScan = false,
+  });
 
   /// 是否显示「执行导入」（抓取课表）。
   /// 功能页进入时只登录，不做导入。
   final bool allowImport;
+
+  /// 是否显示「扫描教室」（遍历班级课表采集上课地点，供空教室查询使用）。
+  /// 与 [allowImport] 互斥，两者都为 true 时以扫描模式为准。
+  final bool roomScan;
+
+  /// 当前是否为扫描模式。
+  bool get _scanMode => roomScan;
 
   @override
   State<JwglLoginPage> createState() => _JwglLoginPageState();
@@ -58,6 +73,15 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
 
   /// 注入脚本 = 桥接 shim + 上游适配脚本。
   String? _injectJs;
+
+  /// 班级课表扫描脚本（空教室数据采集）。
+  String? _roomScanJs;
+
+  /// 扫描数据的累积构建器。
+  RoomScanBuilder _scanBuilder = RoomScanBuilder();
+
+  /// 扫描是否仍在进行（用于离开页面时通知脚本停下）。
+  bool _scanRunning = false;
 
   /// WebVPN 滑块验证码自动求解脚本。
   String? _captchaSolverJs;
@@ -149,8 +173,10 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   String _accStartDate = '';
   String _accTermName = '';
 
-  /// 「执行导入」是否可用（拿到脚本后才可用）。
-  bool get _ready => _controller != null && _injectJs != null;
+  /// 「执行导入」/「扫描教室」是否可用（拿到对应脚本后才可用）。
+  bool get _ready =>
+      _controller != null &&
+      (widget._scanMode ? _roomScanJs != null : _injectJs != null);
 
   @override
   void initState() {
@@ -162,6 +188,12 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   void dispose() {
     _autoSlowTimer?.cancel();
     _captchaCtrl.dispose();
+    // 离开页面时通知扫描脚本停下
+    if (_scanRunning) {
+      _controller?.runJavaScript(
+        'window.__zsyRoomScan && window.__zsyRoomScan.stop();',
+      );
+    }
     super.dispose();
   }
 
@@ -170,6 +202,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     final injectable = await JwglAdapterRepository.loadInjectable();
     final solver = await JwglAdapterRepository.loadCaptchaSolver();
     final autoLogin = await JwglAdapterRepository.loadAutoLogin();
+    final roomScanJs = await JwglAdapterRepository.loadRoomScan();
     final profile = await ProfileRepository.load();
     // 训练页攒下的字形样本：有就代填验证码，没有就完全走手动
     final templates = await CaptchaTemplateRepository.load();
@@ -182,6 +215,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       _injectJs = injectable;
       _captchaSolverJs = solver;
       _autoLoginJs = autoLogin;
+      _roomScanJs = roomScanJs;
       _profile = profile;
       _templates = templates;
     });
@@ -280,6 +314,10 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
       _onAutoMessage(raw);
       return;
     }
+    if (type != null && type.startsWith('roomscan')) {
+      _onRoomScanMessage(type, raw);
+      return;
+    }
 
     final JwglBridgeMessage msg;
     try {
@@ -357,6 +395,83 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
         }
         return;
     }
+  }
+
+  // ---------------------------------------------------- 教室扫描回传
+
+  /// 班级课表扫描脚本的回传：进度 / 分批数据 / 完成标记。
+  void _onRoomScanMessage(String type, String raw) {
+    Map<String, dynamic>? j;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) j = decoded;
+    } on FormatException {
+      return;
+    }
+    if (j == null) return;
+
+    switch (type) {
+      case 'roomscan_progress':
+        final message = (j['message'] ?? '').toString();
+        if (message.isEmpty) return;
+        setState(() {
+          _status = message;
+          _error = null;
+        });
+        return;
+
+      case 'roomscan_batch':
+        final classes = ((j['classes'] as List?) ?? [])
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        final lessons = ((j['lessons'] as List?) ?? [])
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        _scanBuilder.addBatch(classes, lessons);
+        setState(() {
+          _status = '已收到 ${_scanBuilder.classCount} 个班级 / '
+              '${_scanBuilder.lessonCount} 条排课记录';
+        });
+        return;
+
+      case 'roomscan_done':
+        _finalizeRoomScan(j);
+        return;
+    }
+  }
+
+  /// 扫描完成：组装数据落库并返回。
+  Future<void> _finalizeRoomScan(Map<String, dynamic> j) async {
+    _scanRunning = false;
+    if (j['ok'] != true) {
+      _fail((j['error'] ?? '扫描失败').toString());
+      return;
+    }
+    if (_scanBuilder.lessonCount == 0) {
+      _fail('扫描完成，但没有收到排课数据。\n请确认已登录教务系统后重试。');
+      return;
+    }
+
+    final data = _scanBuilder.build(
+      term: (j['term'] ?? '').toString(),
+      termName: (j['termName'] ?? '').toString(),
+      gradeFrom: (j['gradeFrom'] as num?)?.toInt() ?? 0,
+      gradeTo: (j['gradeTo'] as num?)?.toInt() ?? 0,
+    );
+    await RoomScanRepository.save(data);
+    if (!mounted) return;
+
+    final elapsed = (j['elapsedSec'] as num?)?.toInt() ?? 0;
+    setState(() {
+      _fetching = false;
+      _status = '扫描完成，共 ${data.classCount} 个班级 / '
+          '${data.lessons.length} 条排课记录';
+      _scanBuilder = RoomScanBuilder();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('教室数据扫描完成（耗时 $elapsed 秒），已保存到本机')),
+    );
+    Navigator.of(context).pop(true);
   }
 
   // ---------------------------------------------------- 自动登录回传
@@ -886,6 +1001,44 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
     );
   }
 
+  /// 点「扫描教室」：注入班级课表扫描脚本。
+  ///
+  /// 脚本会遍历全部学院/专业/年级/班级抓取上课地点，耗时几分钟，
+  /// 进度实时显示在底部状态栏；期间返回键退出会通知脚本停下。
+  Future<void> _startRoomScan() async {
+    final controller = _controller;
+    final js = _roomScanJs;
+    if (controller == null || js == null || _fetching) return;
+
+    if (_autoVisible) _stopAutoLogin('已切换为手动操作');
+
+    final token = ++_fetchToken;
+    _scanBuilder = RoomScanBuilder();
+
+    setState(() {
+      _fetching = true;
+      _scanRunning = true;
+      _error = null;
+      _status = '正在扫描教室数据，请稍候 ...';
+    });
+
+    try {
+      await controller.runJavaScript(js);
+    } catch (e) {
+      if (!mounted) return;
+      _fail('脚本注入失败：$e');
+      return;
+    }
+
+    // 兑底：20 秒内没有任何回传，说明脚本没跑起来
+    await Future.delayed(const Duration(seconds: 20));
+    if (!mounted || token != _fetchToken || !_fetching) return;
+    _fail(
+      '没有收到教务系统的响应。\n请确认：① 已登录教务系统；'
+      '② 当前停留在教务系统内的页面（不是 WebVPN 首页）。',
+    );
+  }
+
   Future<void> _reload() => _controller?.reload() ?? Future.value();
 
   /// 菜单里的「自动登录」：让用户选目标系统，再从头跑一遍自动登录。
@@ -895,7 +1048,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   Future<void> _pickAutoTarget() async {
     if (_fetching) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('正在导入课表，请完成后再试自动登录')),
+        const SnackBar(content: Text('正在执行任务，请完成后再试自动登录')),
       );
       return;
     }
@@ -1213,6 +1366,10 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
   Widget build(BuildContext context) {
     final controller = _controller;
     final theme = Theme.of(context);
+    final scanMode = widget._scanMode;
+    final bottomHint = scanMode
+        ? '登录到教务系统主页后，点击右侧「扫描教室」'
+        : '登录到教务系统主页后，点击右侧「执行导入」';
 
     return Scaffold(
       appBar: AppBar(
@@ -1315,7 +1472,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
           ),
         ],
       ),
-      bottomNavigationBar: !widget.allowImport
+      bottomNavigationBar: (!scanMode && !widget.allowImport)
           ? null
           : BottomAppBar(
               height: 72,
@@ -1326,9 +1483,7 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
                     child: Text(
                       _fetching
                           ? _status
-                          : (_autoVisible
-                              ? _autoStep
-                              : '登录到教务系统主页后，点击右侧「执行导入」'),
+                          : (_autoVisible ? _autoStep : bottomHint),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -1338,17 +1493,17 @@ class _JwglLoginPageState extends State<JwglLoginPage> {
                   ),
                   const SizedBox(width: 12),
                   FilledButton(
-                    // 自动登录还盖着网页时不允许导入（此时还在登录页，抓不到数据）
+                    // 自动登录还盖着网页时不允许执行（此时还在登录页，抓不到数据）
                     onPressed: (!_ready || _fetching || (_autoVisible && _autoBlocking))
                         ? null
-                        : _startImport,
+                        : (scanMode ? _startRoomScan : _startImport),
                     child: _fetching
                         ? const SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('执行导入'),
+                        : Text(scanMode ? '扫描教室' : '执行导入'),
                   ),
                 ],
               ),

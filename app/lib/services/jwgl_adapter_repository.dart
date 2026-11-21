@@ -28,10 +28,14 @@ class JwglAdapterRepository {
   /// 自动登录编排脚本（代填账号密码 + 点登录 + 推进到教务主页）。
   static const String autoLoginAsset = 'assets/js/auto_login.js';
 
+  /// 班级课表扫描脚本（空教室功能的采集端）。
+  static const String roomScanAsset = 'assets/js/zqu_room_scan.js';
+
   static String? _upstreamCache;
   static String? _shimCache;
   static String? _captchaSolverCache;
   static String? _autoLoginCache;
+  static String? _roomScanCache;
 
   /// 读取内置的上游适配脚本原文。
   static Future<String> loadUpstream() async =>
@@ -54,6 +58,10 @@ class JwglAdapterRepository {
   /// 教务登录页 / 其他页）自行决定该填什么、点哪个按钮。
   static Future<String> loadAutoLogin() async =>
       _autoLoginCache ??= await rootBundle.loadString(autoLoginAsset);
+
+  /// 读取班级课表扫描脚本（空教室数据采集）。
+  static Future<String> loadRoomScan() async =>
+      _roomScanCache ??= await rootBundle.loadString(roomScanAsset);
 
   /// 拼出实际注入 WebView 的脚本：桥接 shim + 用 IIFE 包裹的上游脚本。
   ///
