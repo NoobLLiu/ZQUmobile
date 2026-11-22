@@ -62,7 +62,7 @@ class HomePage extends StatelessWidget {
           route: '/attachment',
         ),
         HomeFeature(
-          title: '空教室',
+          title: '空教室查询',
           subtitle: '查查一二教哪间教室没课，找地方自习',
           icon: Icons.meeting_room_outlined,
           route: '/empty-rooms',

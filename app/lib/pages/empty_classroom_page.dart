@@ -47,7 +47,8 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
   int? _building; // null=全部
   Set<int> _sections = {};
   int? _manualWeek; // 没有开学日期时的手动周次
-  bool _excludePersonal = false; // 用个人课表排除已有课程的节次
+  bool _dateExpanded = false; // 展开 15 天日期选择
+  bool _todayExpanded = false; // 当天课程卡展开/折叠
 
   List<RoomQueryResult>? _results;
   bool _loadingData = true;
@@ -140,22 +141,6 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
       ..sort((a, b) => a.startSection.compareTo(b.startSection));
   }
 
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime.now().subtract(const Duration(days: 180)),
-      lastDate: DateTime.now().add(const Duration(days: 180)),
-      helpText: '选择查询日期',
-    );
-    if (picked != null) {
-      setState(() {
-        _selectedDate = picked;
-        _results = null;
-      });
-    }
-  }
-
   void _setSections(Set<int> sections) {
     setState(() {
       _sections = sections;
@@ -203,20 +188,7 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
       );
       return;
     }
-
-    var sections = _sections;
-    if (_excludePersonal) {
-      sections = sections.difference(_personalBusySections);
-      if (sections.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('所选节次你都有课，换几节或关闭「排除已有课程」'),
-          ),
-        );
-        return;
-      }
-    }
-    if (sections.isEmpty) {
+    if (_sections.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请至少选择一个节次')),
       );
@@ -228,12 +200,12 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
       directory: directory,
       week: week,
       day: _selectedDay,
-      sections: sections,
+      sections: _sections,
       building: _building,
     );
     setState(() {
       _results = results;
-      _lastQuerySections = sections;
+      _lastQuerySections = _sections;
     });
   }
 
@@ -262,112 +234,16 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
       ref: ref,
       day: _selectedDay,
     );
-    final week = _effectiveWeek;
-    final courseNames = scan.courseNames;
-
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('${room.buildingName} ${room.number}'),
-        contentPadding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                child: Text(
-                  '${_dateLabel(_selectedDate)} 的课表'
-                  '${room.type.isEmpty ? '' : ' · ${room.type}'}',
-                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                      ),
-                ),
-              ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  children: [
-                    if (lessons.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          '当天无排课记录，全天空闲',
-                          style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
-                                color: Theme.of(ctx).colorScheme.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                      )
-                    else
-                      for (final l in lessons)
-                        ListTile(
-                          dense: true,
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 16),
-                          leading: SizedBox(
-                            width: 58,
-                            child: Text(
-                              l.startSection == l.endSection
-                                  ? '第${l.startSection}节'
-                                  : '第${l.startSection}-${l.endSection}节',
-                              style: Theme.of(ctx)
-                                  .textTheme
-                                  .labelMedium
-                                  ?.copyWith(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          title: Text(
-                            l.nameIndex >= 0 &&
-                                    l.nameIndex < courseNames.length &&
-                                    courseNames[l.nameIndex].isNotEmpty
-                                ? courseNames[l.nameIndex]
-                                : '（未知名课程）',
-                            style: Theme.of(ctx).textTheme.bodyMedium,
-                          ),
-                          subtitle: Text(
-                            weeksLabel(l.weeks) + (l.day == 0 ? ' · 星期未知' : ''),
-                            style: Theme.of(ctx).textTheme.bodySmall,
-                          ),
-                          trailing: week != null && l.weeks.contains(week)
-                              ? Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(ctx)
-                                        .colorScheme
-                                        .primaryContainer,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    '本周',
-                                    style: Theme.of(ctx)
-                                        .textTheme
-                                        .labelSmall
-                                        ?.copyWith(
-                                          color: Theme.of(ctx)
-                                              .colorScheme
-                                              .onPrimaryContainer,
-                                        ),
-                                  ),
-                                )
-                              : null,
-                        ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('关闭'),
-          ),
-        ],
+      builder: (ctx) => _RoomScheduleDialog(
+        scan: scan,
+        room: room,
+        lessons: lessons,
+        allLessons: RoomOccupancyIndex(scan, directory).lessonsFor(ref),
+        dateLabel: _dateLabel(_selectedDate),
+        day: _selectedDay,
+        week: _effectiveWeek,
       ),
     );
   }
@@ -402,7 +278,7 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
     final xinghu = _campus == _Campus.xinghu;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('空教室')),
+      appBar: AppBar(title: const Text('空教室查询')),
       body: _loadingData
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -417,9 +293,11 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
                   if (_scan == null)
                     _EmptyDataCard(onScan: _openScan)
                   else ...[
-                    _buildSectionFilterCard(theme),
+                    _buildDataCard(theme),
                     const SizedBox(height: 12),
                     _buildTodayCoursesCard(theme),
+                    const SizedBox(height: 12),
+                    _buildSectionFilterCard(theme),
                     const SizedBox(height: 12),
                     _buildBuildingsCard(theme),
                     const SizedBox(height: 12),
@@ -477,12 +355,12 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
             if (_campus != _Campus.xinghu) ...[
               const SizedBox(height: 10),
 
-              // 日期快捷 + 周次
+              // 日期快捷 + 周次 + 15 天展开
               Row(
                 children: [
                   for (final offset in [0, 1, 2])
                     Padding(
-                      padding: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.only(right: 6),
                       child: ChoiceChip(
                         label: Text(_dateLabel(
                             DateTime.now().add(Duration(days: offset)))),
@@ -498,57 +376,41 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
                         }),
                       ),
                     ),
-                  InkWell(
-                    onTap: _pickDate,
-                    borderRadius: BorderRadius.circular(8),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 4),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.edit_calendar_outlined,
-                              size: 16, color: theme.colorScheme.primary),
-                          const SizedBox(width: 4),
-                          Text(
-                            '选日期',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
                   const Spacer(),
                   _buildWeekBadge(theme),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: '展开 15 天内的日期',
+                    icon: Icon(_dateExpanded
+                        ? Icons.expand_less
+                        : Icons.calendar_month_outlined),
+                    onPressed: () =>
+                        setState(() => _dateExpanded = !_dateExpanded),
+                  ),
                 ],
               ),
-
-              // 数据状态（一行小字 + 重新扫描入口）
-              if (scan != null) ...[
-                const SizedBox(height: 8),
-                Row(
+              if (_dateExpanded) ...[
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
-                    Expanded(
-                      child: Text(
-                        _dataSummary(scan),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          fontSize: 11,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Tooltip(
-                      message: '重新扫描教室数据',
-                      child: IconButton(
+                    for (var i = 0; i < 15; i++)
+                      ChoiceChip(
+                        label: Text(_dateLabel(
+                            DateTime.now().add(Duration(days: i)))),
+                        selected: _sameDay(
+                            DateTime.now().add(Duration(days: i)),
+                            _selectedDate),
+                        showCheckmark: false,
                         visualDensity: VisualDensity.compact,
-                        onPressed: _openScan,
-                        icon: const Icon(Icons.radar_outlined, size: 18),
+                        onSelected: (_) => setState(() {
+                          _selectedDate =
+                              DateTime.now().add(Duration(days: i));
+                          _dateExpanded = false;
+                          _results = null;
+                        }),
                       ),
-                    ),
                   ],
                 ),
               ],
@@ -594,12 +456,51 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
     final dd = scan.scannedAt.day.toString().padLeft(2, '0');
     final hh = scan.scannedAt.hour.toString().padLeft(2, '0');
     final mi = scan.scannedAt.minute.toString().padLeft(2, '0');
-    final term = scan.termName.isNotEmpty ? scan.termName : scan.term;
-    return '教室数据 $term · $mm-$dd $hh:$mi 扫描 · '
-        '${scan.classCount} 个班级 ${scan.lessons.length} 条排课';
+    return '$mm-$dd $hh:$mi 扫描 · '
+        '${scan.classCount} 个班级 · ${scan.lessons.length} 条排课';
   }
 
-  /// 卡 2：节次筛选。
+  /// 卡 2：教室数据统计 + 重新扫描入口。
+  Widget _buildDataCard(ThemeData theme) {
+    final scan = _scan!;
+    return Card(
+      color: theme.colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '教室数据${scan.termName.isNotEmpty ? ' · ${scan.termName}' : ''}',
+                    style: theme.textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _dataSummary(scan),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            FilledButton.tonalIcon(
+              onPressed: _openScan,
+              icon: const Icon(Icons.radar_outlined, size: 18),
+              label: const Text('获取数据'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 卡 3：节次筛选。
   Widget _buildSectionFilterCard(ThemeData theme) {
     return Card(
       color: theme.colorScheme.surfaceContainerLow,
@@ -620,25 +521,6 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '使用个人课表排除已有课程',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-                Switch(
-                  value: _excludePersonal,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  onChanged: (v) => setState(() {
-                    _excludePersonal = v;
-                    _results = null;
-                  }),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
             Wrap(
               spacing: 8,
               children: [
@@ -673,66 +555,93 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
     );
   }
 
-  /// 卡 3：当天课程（个人课表）。
+  /// 卡 4：当天课程（个人课表，可展开/折叠）。
   Widget _buildTodayCoursesCard(ThemeData theme) {
     final courses = _personalCoursesToday;
     return Card(
       color: theme.colorScheme.surfaceContainerLow,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _cardTitle(theme, Icons.event_note_outlined, '当天课程'),
-            const SizedBox(height: 10),
-            if (courses.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Text(
-                  _timetable == null
-                      ? '暂无本地课程，请先在「我的课表」导入个人课表'
-                      : '${_dateLabel(_selectedDate)}没有课，全天有空',
-                  style: theme.textTheme.bodySmall?.copyWith(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _todayExpanded = !_todayExpanded),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, 14, 16, _todayExpanded ? 6 : 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _cardTitle(theme, Icons.event_note_outlined, '当天课程'),
+                  ),
+                  Text(
+                    '${courses.length} 门课',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    _todayExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 20,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
-                ),
-              )
-            else
-              for (final c in courses)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 62,
-                        child: Text(
-                          c.startSection == c.endSection
-                              ? '第${c.startSection}节'
-                              : '第${c.startSection}-${c.endSection}节',
-                          style: theme.textTheme.labelMedium
-                              ?.copyWith(fontWeight: FontWeight.w700),
+                ],
+              ),
+            ),
+          ),
+          if (_todayExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (courses.isEmpty)
+                    Text(
+                      _timetable == null
+                          ? '暂无本地课程，请先在「我的课表」导入个人课表'
+                          : '${_dateLabel(_selectedDate)}没有课，全天有空',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    )
+                  else
+                    for (final c in courses)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 62,
+                              child: Text(
+                                c.startSection == c.endSection
+                                    ? '第${c.startSection}节'
+                                    : '第${c.startSection}-${c.endSection}节',
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                    fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                c.name,
+                                style: theme.textTheme.bodyMedium,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (c.position.isNotEmpty)
+                              Text(
+                                c.position,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                      Expanded(
-                        child: Text(
-                          c.name,
-                          style: theme.textTheme.bodyMedium,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (c.position.isNotEmpty)
-                        Text(
-                          c.position,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-          ],
-        ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1223,4 +1132,400 @@ class _RoomChip extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 教室当天/本周课表弹窗。
+///
+/// 当天视图：左列节次 + 作息时间，右列该节的课程（连续同课合并）；
+/// 本周视图：节次 × 星期 的网格课表。顶部可切换。
+class _RoomScheduleDialog extends StatefulWidget {
+  const _RoomScheduleDialog({
+    required this.scan,
+    required this.room,
+    required this.lessons,
+    required this.allLessons,
+    required this.dateLabel,
+    required this.day,
+    required this.week,
+  });
+
+  final RoomScanData scan;
+  final Classroom room;
+  final List<RoomLesson> lessons; // 当天（含星期未知）的排课
+  final List<RoomLesson> allLessons; // 教室全部排课
+  final String dateLabel;
+  final int day;
+  final int? week;
+
+  @override
+  State<_RoomScheduleDialog> createState() => _RoomScheduleDialogState();
+}
+
+class _RoomScheduleDialogState extends State<_RoomScheduleDialog> {
+  bool _weekView = false;
+
+  static final List<TimeSlot> _slots =
+      kPresetTimeSlots.map((e) => TimeSlot.fromJson(e)).toList();
+
+  String _name(RoomLesson l) {
+    final names = widget.scan.courseNames;
+    if (l.nameIndex >= 0 &&
+        l.nameIndex < names.length &&
+        names[l.nameIndex].isNotEmpty) {
+      return names[l.nameIndex];
+    }
+    return '课程';
+  }
+
+  /// 当天视图：把 1..14 节合并成连续段（同一节次的覆盖课程相同则并为一行）。
+  List<_RoomDaySpan> _daySpans() {
+    final spans = <_RoomDaySpan>[];
+    String keyOf(int sec) => widget.lessons
+        .where((l) => l.startSection <= sec && l.endSection >= sec)
+        .map((l) => '${l.nameIndex}|${l.startSection}-${l.endSection}'
+            '|${l.weeks.join(",")}')
+        .join('#');
+
+    var i = 1;
+    while (i <= 14) {
+      final key = keyOf(i);
+      var end = i;
+      while (end < 14 && keyOf(end + 1) == key) {
+        end++;
+      }
+      spans.add(_RoomDaySpan(
+        start: i,
+        end: end,
+        lessons: widget.lessons
+            .where((l) => l.startSection <= i && l.endSection >= end)
+            .toList(),
+      ));
+      i = end + 1;
+    }
+    return spans;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${widget.room.buildingName} ${widget.room.number}',
+              style: theme.textTheme.titleMedium,
+            ),
+          ),
+          Text(
+            widget.room.type,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Row(
+                children: [
+                  Text(
+                    widget.dateLabel,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const Spacer(),
+                  InkWell(
+                    onTap: () => setState(() => _weekView = !_weekView),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _weekView
+                                ? Icons.calendar_view_day
+                                : Icons.calendar_view_week,
+                            size: 15,
+                            color: scheme.primary,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _weekView ? '看当天' : '看本周',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: _weekView ? _buildWeekGrid(theme) : _buildDayList(theme),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+
+  /// 当天视图：两列列表（左：节次 + 时间；右：课程）。
+  Widget _buildDayList(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    final spans = _daySpans();
+    final hasAny = widget.lessons.isNotEmpty;
+
+    return ListView(
+      shrinkWrap: true,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      children: [
+        if (!hasAny)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Text(
+              '当天无排课记录，全天空闲',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          )
+        else
+          for (final span in spans) ...[
+            Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: scheme.outlineVariant.withValues(alpha: 0.4),
+                    width: 0.6,
+                  ),
+                ),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 76,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          span.start == span.end
+                              ? '第${span.start}节'
+                              : '第${span.start}-${span.end}节',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          _slotTime(span.start, span.end),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontSize: 9.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: span.lessons.isEmpty
+                        ? Text(
+                            '空闲',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.primary.withValues(alpha: 0.8),
+                            ),
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (final l in span.lessons)
+                                Text(
+                                  '${_name(l)}（${weeksLabel(l.weeks)}）',
+                                  style: theme.textTheme.bodySmall,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        const SizedBox(height: 6),
+      ],
+    );
+  }
+
+  String _slotTime(int start, int end) {
+    final s = start >= 1 && start <= _slots.length
+        ? _slots[start - 1].startTime
+        : '';
+    final e = end >= 1 && end <= _slots.length ? _slots[end - 1].endTime : '';
+    return '$s-$e';
+  }
+
+  /// 本周视图：节次 × 星期 的网格课表。
+  Widget _buildWeekGrid(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    final week = widget.week;
+
+    // 按星期分组的本周排课
+    final byDay = <int, List<RoomLesson>>{};
+    var coarseCount = 0;
+    for (final l in widget.allLessons) {
+      if (l.day == 0) {
+        coarseCount++;
+        continue;
+      }
+      if (week != null && !l.weeks.contains(week)) continue;
+      (byDay[l.day] ??= []).add(l);
+    }
+
+    String? cellCourse(int day, int section) {
+      for (final l in byDay[day] ?? const <RoomLesson>[]) {
+        if (l.startSection <= section && l.endSection >= section) {
+          return _name(l);
+        }
+      }
+      return null;
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (coarseCount > 0)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 6),
+            child: Text(
+              '另有 $coarseCount 条整天占用记录（星期未知）',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontSize: 10.5,
+              ),
+            ),
+          ),
+        Flexible(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                // 表头：节 + 周一..周日
+                Row(
+                  children: [
+                    const SizedBox(width: 22),
+                    for (var d = 1; d <= 7; d++)
+                      Expanded(
+                        child: Center(
+                          child: Text(
+                            '周${'一二三四五六日'[d - 1]}',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: d == widget.day
+                                  ? scheme.primary
+                                  : scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                for (var sec = 1; sec <= 14; sec++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 22,
+                          child: Text(
+                            '$sec',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                        for (var d = 1; d <= 7; d++)
+                          Expanded(
+                            child: Container(
+                              margin: const EdgeInsets.all(1),
+                              height: 30,
+                              decoration: BoxDecoration(
+                                color: cellCourse(d, sec) != null
+                                    ? scheme.primaryContainer
+                                        .withValues(alpha: 0.55)
+                                    : scheme.surfaceContainerHighest
+                                        .withValues(alpha: 0.35),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              alignment: Alignment.center,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 1),
+                              child: Text(
+                                cellCourse(d, sec) ?? '',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 8,
+                                  height: 1.1,
+                                  color: cellCourse(d, sec) != null
+                                      ? scheme.onPrimaryContainer
+                                      : Colors.transparent,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 4),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 当天视图里的一段（连续节次 + 覆盖课程）。
+class _RoomDaySpan {
+  const _RoomDaySpan({
+    required this.start,
+    required this.end,
+    required this.lessons,
+  });
+
+  final int start;
+  final int end;
+  final List<RoomLesson> lessons;
 }
