@@ -367,7 +367,8 @@ void main() {
 
       expect(find.text('还没有教室数据'), findsOneWidget);
       expect(find.text('去扫描教室数据'), findsOneWidget);
-      expect(find.text('获取空教室信息'), findsOneWidget);
+      // 无数据时不渲染查询按钮（引导用户先扫描）
+      expect(find.text('查询空教室'), findsNothing);
     });
   });
 }

@@ -211,16 +211,26 @@ List<RoomQueryResult> findRooms({
 
 /// 某教室某星期（全部周次）的排课记录，按起始节次排序。
 ///
+/// [week] 非 null 时只返回本周的排课（非本周课程不展示也不占用）。
 /// day==0（星期未知）的记录也返回，由调用方决定如何展示。
 List<RoomLesson> daySchedule({
   required RoomScanData scan,
   required ClassroomDirectory directory,
   required RoomRef ref,
   required int day,
+  int? week,
 }) {
   final index = RoomOccupancyIndex(scan, directory);
   final lessons = index.lessonsFor(ref);
-  final hit = lessons.where((l) => l.day == day || l.day == 0).toList();
+  bool visible(RoomLesson l) {
+    if (l.day != day && l.day != 0) return false;
+    if (week != null && l.weeks.isNotEmpty && !l.weeks.contains(week)) {
+      return false;
+    }
+    return true;
+  }
+
+  final hit = lessons.where(visible).toList();
   hit.sort((a, b) => a.startSection.compareTo(b.startSection));
   return hit;
 }

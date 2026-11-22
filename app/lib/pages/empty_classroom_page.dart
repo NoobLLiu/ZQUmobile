@@ -233,6 +233,7 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
       directory: directory,
       ref: ref,
       day: _selectedDay,
+      week: _effectiveWeek,
     );
     showDialog<void>(
       context: context,
@@ -284,27 +285,37 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
               children: [
-                _buildQueryCard(theme),
+                if (_scan != null) ...[
+                  _buildDataCard(theme),
+                  const SizedBox(height: 12),
+                ],
+                _buildCampusCard(theme),
                 if (xinghu) ...[
                   const SizedBox(height: 12),
                   _buildXinghuCard(theme),
+                ] else if (_scan == null) ...[
+                  const SizedBox(height: 12),
+                  _EmptyDataCard(onScan: _openScan),
                 ] else ...[
                   const SizedBox(height: 12),
-                  if (_scan == null)
-                    _EmptyDataCard(onScan: _openScan)
-                  else ...[
-                    _buildDataCard(theme),
-                    const SizedBox(height: 12),
-                    _buildTodayCoursesCard(theme),
-                    const SizedBox(height: 12),
-                    _buildSectionFilterCard(theme),
-                    const SizedBox(height: 12),
-                    _buildBuildingsCard(theme),
-                    const SizedBox(height: 12),
-                    _buildResultCard(theme),
-                    const SizedBox(height: 12),
-                    _buildOverviewCard(theme),
-                  ],
+                  _buildBuildingsCard(theme),
+                  const SizedBox(height: 12),
+                  _buildSectionFilterCard(theme),
+                  const SizedBox(height: 12),
+                  _buildTodayCoursesCard(theme),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _runQuery,
+                      icon: const Icon(Icons.search),
+                      label: const Text('查询空教室'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildResultCard(theme),
+                  const SizedBox(height: 12),
+                  _buildOverviewCard(theme),
                 ],
               ],
             ),
@@ -322,9 +333,9 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
     );
   }
 
-  /// 卡 1：查询条件（校区切换 + 日期 + 获取按钮）。
-  Widget _buildQueryCard(ThemeData theme) {
-    final scan = _scan;
+  /// 卡 2：选择校区（校区切换 + 日期 + 周次）。
+  Widget _buildCampusCard(ThemeData theme) {
+    final scheme = theme.colorScheme;
     return Card(
       color: theme.colorScheme.surfaceContainerLow,
       child: Padding(
@@ -332,7 +343,7 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _cardTitle(theme, Icons.fact_check_outlined, '查询条件'),
+            _cardTitle(theme, Icons.location_on_outlined, '选择校区'),
             const SizedBox(height: 12),
 
             // 校区
@@ -353,34 +364,22 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
               ),
             ),
             if (_campus != _Campus.xinghu) ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
 
-              // 日期快捷 + 周次 + 15 天展开
+              // 日期 + 周次 + 15 天展开开关
               Row(
                 children: [
-                  for (final offset in [0, 1, 2])
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ChoiceChip(
-                        label: Text(_dateLabel(
-                            DateTime.now().add(Duration(days: offset)))),
-                        selected: _sameDay(
-                            DateTime.now().add(Duration(days: offset)),
-                            _selectedDate),
-                        showCheckmark: false,
-                        visualDensity: VisualDensity.compact,
-                        onSelected: (_) => setState(() {
-                          _selectedDate =
-                              DateTime.now().add(Duration(days: offset));
-                          _results = null;
-                        }),
-                      ),
+                  Text(
+                    '日期',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: scheme.onSurfaceVariant,
                     ),
+                  ),
                   const Spacer(),
                   _buildWeekBadge(theme),
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    tooltip: '展开 15 天内的日期',
+                    tooltip: _dateExpanded ? '收起日期列表' : '展开 15 天内的日期',
                     icon: Icon(_dateExpanded
                         ? Icons.expand_less
                         : Icons.calendar_month_outlined),
@@ -389,12 +388,32 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
                   ),
                 ],
               ),
-              if (_dateExpanded) ...[
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
+
+              // 快捷日期（三个固定片，Wrap 保证不溢出）
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final (offset, label) in const [
+                    (0, '今天'),
+                    (1, '明天'),
+                    (2, '后天'),
+                  ])
+                    ChoiceChip(
+                      label: Text(label),
+                      selected: _sameDay(
+                          DateTime.now().add(Duration(days: offset)),
+                          _selectedDate),
+                      showCheckmark: false,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => setState(() {
+                        _selectedDate =
+                            DateTime.now().add(Duration(days: offset));
+                        _results = null;
+                      }),
+                    ),
+                  // 展开时：15 天内的完整日期片
+                  if (_dateExpanded)
                     for (var i = 0; i < 15; i++)
                       ChoiceChip(
                         label: Text(_dateLabel(
@@ -407,22 +426,10 @@ class _EmptyClassroomPageState extends State<EmptyClassroomPage> {
                         onSelected: (_) => setState(() {
                           _selectedDate =
                               DateTime.now().add(Duration(days: i));
-                          _dateExpanded = false;
                           _results = null;
                         }),
                       ),
-                  ],
-                ),
-              ],
-
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: scan == null ? null : _runQuery,
-                  icon: const Icon(Icons.search),
-                  label: const Text('获取空教室信息'),
-                ),
+                ],
               ),
             ],
           ],
