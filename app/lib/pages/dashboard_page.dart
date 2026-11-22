@@ -16,17 +16,8 @@ import '../services/attachment_schedule_repository.dart';
 import '../services/profile_repository.dart';
 import '../services/timetable_repository.dart';
 import '../services/utility_provider.dart';
-import '../widgets/app_bar_title.dart';
 
-const List<String> _weekdayLabels = [
-  '周一',
-  '周二',
-  '周三',
-  '周四',
-  '周五',
-  '周六',
-  '周日',
-];
+const List<String> _weekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 /// 水电缓存的新鲜窗口等分档规则见 UtilityDataProvider。
 
@@ -148,7 +139,8 @@ class DashboardPageState extends State<DashboardPage>
     });
   }
 
-  DateTime? get _semStart => DateTime.tryParse(_timetable?.semesterStartDate ?? '');
+  DateTime? get _semStart =>
+      DateTime.tryParse(_timetable?.semesterStartDate ?? '');
 
   DateTime? get _semEnd {
     final tt = _timetable;
@@ -223,9 +215,10 @@ class DashboardPageState extends State<DashboardPage>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const AppBarBrandTitle('看板')),
-      body: Column(
+    // 顶部栏由 RootShell 统一提供；底部留白让内容不被悬浮胶囊遮住。
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 88),
+      child: Column(
         children: [
           Expanded(
             child: Padding(
@@ -338,10 +331,7 @@ class DashboardPageState extends State<DashboardPage>
                   Expanded(
                     child: Text(
                       '左右滑动或点日期切换',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: scheme.outline,
-                      ),
+                      style: TextStyle(fontSize: 11, color: scheme.outline),
                     ),
                   ),
                   if (!_isToday)
@@ -352,10 +342,7 @@ class DashboardPageState extends State<DashboardPage>
                       ),
                       child: Text(
                         '回到今天',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: scheme.primary,
-                        ),
+                        style: TextStyle(fontSize: 11, color: scheme.primary),
                       ),
                     ),
                   if (!_isToday) const SizedBox(width: 4),
@@ -394,10 +381,7 @@ class DashboardPageState extends State<DashboardPage>
             child: Text(
               _headerLabel(date),
               maxLines: 1,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-              ),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
             ),
           ),
         ),
@@ -540,8 +524,7 @@ class DashboardPageState extends State<DashboardPage>
       padding: const EdgeInsets.only(left: 4, top: 4),
       child: Row(
         children: [
-          Icon(Icons.event_available_outlined,
-              size: 13, color: scheme.primary),
+          Icon(Icons.event_available_outlined, size: 13, color: scheme.primary),
           const SizedBox(width: 4),
           Text(
             '附属日程',
@@ -571,8 +554,7 @@ class DashboardPageState extends State<DashboardPage>
     final fg = scheme.onSurface;
     final fgSub = scheme.onSurfaceVariant;
 
-    final ongoing =
-        isToday && _inProgress(schedule.start, schedule.end);
+    final ongoing = isToday && _inProgress(schedule.start, schedule.end);
     final sub = [
       schedule.weekdayLabel,
       if (schedule.location.isNotEmpty) schedule.location,
@@ -699,7 +681,11 @@ class DashboardPageState extends State<DashboardPage>
         ? '第 ${course.startSection} 节'
         : '${course.startSection}-${course.endSection} 节';
 
-    final ongoing = isToday && start.isNotEmpty && end.isNotEmpty && _inProgress(start, end);
+    final ongoing =
+        isToday &&
+        start.isNotEmpty &&
+        end.isNotEmpty &&
+        _inProgress(start, end);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -725,10 +711,7 @@ class DashboardPageState extends State<DashboardPage>
                     ),
                   ),
                   if (end.isNotEmpty)
-                    Text(
-                      end,
-                      style: TextStyle(fontSize: 11, color: fgSub),
-                    ),
+                    Text(end, style: TextStyle(fontSize: 11, color: fgSub)),
                 ],
               ),
             ),

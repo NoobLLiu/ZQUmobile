@@ -11,7 +11,6 @@ import 'clear_timetable_page.dart';
 import 'profile_page.dart';
 import 'term_page.dart';
 import 'utility_alert_page.dart';
-import '../widgets/app_bar_title.dart';
 
 /// 设置页。
 class SettingsPage extends StatelessWidget {
@@ -19,71 +18,69 @@ class SettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const AppBarBrandTitle('设置')),
-      body: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
-        children: [
-          _Group(
-            title: '账号',
-            items: [
-              _Item(
-                icon: Icons.person_outline,
-                title: '编辑个人信息',
-                page: (_) => const ProfilePage(),
-              ),
-            ],
-          ),
-          _Group(
-            title: '课表',
-            items: [
-              _Item(
-                icon: Icons.event_available_outlined,
-                title: '学期与开学日期',
-                page: (_) => const TermPage(),
-              ),
-              _Item(
-                icon: Icons.delete_outline,
-                title: '清空课表缓存',
-                danger: true,
-                page: (_) => const ClearTimetablePage(),
-              ),
-            ],
-          ),
-          _Group(
-            title: '提醒',
-            items: [
-              _Item(
-                icon: Icons.notifications_active_outlined,
-                title: '水电余额提醒',
-                page: (_) => const UtilityAlertPage(),
-              ),
-            ],
-          ),
-          _Group(
-            title: 'AI 服务',
-            items: [
-              _Item(
-                icon: Icons.auto_awesome_outlined,
-                title: '模型来源',
-                // 与通知转写页右上角进入的是同一个页面
-                page: (_) => const AiSourcePage(),
-              ),
-            ],
-          ),
-          _Group(
-            title: '关于',
-            items: [
-              _Item(
-                icon: Icons.info_outline,
-                title: '关于掌上砚园',
-                // 版本信息、检测更新、开源许可都收在关于页里
-                page: (_) => const AboutPage(),
-              ),
-            ],
-          ),
-        ],
-      ),
+    return ListView(
+      // 悬浮胶囊底栏的避让空间。
+      padding: const EdgeInsets.only(bottom: 88),
+      children: [
+        _Group(
+          title: '账号',
+          items: [
+            _Item(
+              icon: Icons.person_outline,
+              title: '编辑个人信息',
+              page: (_) => const ProfilePage(),
+            ),
+          ],
+        ),
+        _Group(
+          title: '课表',
+          items: [
+            _Item(
+              icon: Icons.event_available_outlined,
+              title: '学期与开学日期',
+              page: (_) => const TermPage(),
+            ),
+            _Item(
+              icon: Icons.delete_outline,
+              title: '清空课表缓存',
+              danger: true,
+              page: (_) => const ClearTimetablePage(),
+            ),
+          ],
+        ),
+        _Group(
+          title: '提醒',
+          items: [
+            _Item(
+              icon: Icons.notifications_active_outlined,
+              title: '水电余额提醒',
+              page: (_) => const UtilityAlertPage(),
+            ),
+          ],
+        ),
+        _Group(
+          title: 'AI 服务',
+          items: [
+            _Item(
+              icon: Icons.auto_awesome_outlined,
+              title: '模型来源',
+              // 与通知转写页右上角进入的是同一个页面
+              page: (_) => const AiSourcePage(),
+            ),
+          ],
+        ),
+        _Group(
+          title: '关于',
+          items: [
+            _Item(
+              icon: Icons.info_outline,
+              title: '关于掌上砚园',
+              // 版本信息、检测更新、开源许可都收在关于页里
+              page: (_) => const AboutPage(),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -155,8 +152,7 @@ class _Row extends StatelessWidget {
 
     return InkWell(
       onTap: () {
-        Navigator.of(context)
-            .push(MaterialPageRoute<void>(builder: item.page));
+        Navigator.of(context).push(MaterialPageRoute<void>(builder: item.page));
       },
       child: SizedBox(
         height: 52,

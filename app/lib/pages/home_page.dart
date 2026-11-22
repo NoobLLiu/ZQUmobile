@@ -3,8 +3,6 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../widgets/app_bar_title.dart';
-
 /// 一个可从功能页进入的功能。
 class HomeFeature {
   const HomeFeature({
@@ -102,17 +100,15 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const AppBarBrandTitle('功能')),
-      body: CustomScrollView(
-        slivers: [
-          for (final section in sections) ...[
-            SliverToBoxAdapter(child: _SectionTitle(section.title)),
-            SliverToBoxAdapter(child: _SectionCard(features: section.features)),
-          ],
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+    return CustomScrollView(
+      slivers: [
+        for (final section in sections) ...[
+          SliverToBoxAdapter(child: _SectionTitle(section.title)),
+          SliverToBoxAdapter(child: _SectionCard(features: section.features)),
         ],
-      ),
+        // 悬浮胶囊底栏的避让空间。
+        const SliverToBoxAdapter(child: SizedBox(height: 88)),
+      ],
     );
   }
 }
@@ -162,7 +158,9 @@ class _SectionCard extends StatelessWidget {
                   height: 1,
                   thickness: 1,
                   indent: 68,
-                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.4,
+                  ),
                 ),
               _FeatureRow(feature: features[i]),
             ],

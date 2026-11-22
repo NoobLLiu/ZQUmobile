@@ -7,6 +7,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_miuix/miuix.dart';
 
 import 'core/build_info.dart';
 import 'pages/attachment_schedule_page.dart';
@@ -22,6 +23,7 @@ import 'pages/timetable_page.dart';
 import 'pages/utility_page.dart';
 import 'services/profile_repository.dart';
 import 'services/utility_reminder.dart';
+import 'widgets/app_bar_title.dart';
 import 'widgets/update_flow.dart';
 
 void main() {
@@ -42,28 +44,42 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '掌上砚园',
-      debugShowCheckedModeBanner: false,
-      theme: _buildTheme(Brightness.light),
-      darkTheme: _buildTheme(Brightness.dark),
-      home: const RootShell(),
-      routes: {
-        '/timetable': (ctx) => const TimetablePage(),
-        '/jwgl': (ctx) => const JwglLoginPage(),
-        '/utility': (ctx) => const UtilityPage(),
-        '/notice': (ctx) => const NoticeRewritePage(),
-        '/express': (ctx) => const ExpressStationPage(),
-        '/attachment': (ctx) => const AttachmentSchedulePage(),
-        '/empty-rooms': (ctx) => const EmptyClassroomPage(),
-      },
+    // MiuixSystemTheme 跟随系统明暗；MiuixThemeController 进一步启用 Monet
+    // 动态取色（Android 读壁纸，其他平台回退固定种子），Material 主题随之联动。
+    return MiuixSystemTheme(
+      child: MiuixThemeController(
+        colorSchemeMode: MiuixColorSchemeMode.monetSystem,
+        child: Builder(
+          builder: (context) {
+            final miuixTheme = MiuixTheme.of(context);
+            return MaterialApp(
+              title: '掌上砚园',
+              debugShowCheckedModeBanner: false,
+              theme: _buildTheme(
+                miuixTheme.brightness,
+                miuixTheme.colors.primary,
+              ),
+              home: const RootShell(),
+              routes: {
+                '/timetable': (ctx) => const TimetablePage(),
+                '/jwgl': (ctx) => const JwglLoginPage(),
+                '/utility': (ctx) => const UtilityPage(),
+                '/notice': (ctx) => const NoticeRewritePage(),
+                '/express': (ctx) => const ExpressStationPage(),
+                '/attachment': (ctx) => const AttachmentSchedulePage(),
+                '/empty-rooms': (ctx) => const EmptyClassroomPage(),
+              },
+            );
+          },
+        ),
+      ),
     );
   }
 
-  /// 主题色沿用拾光课表的默认蓝（0xFF73CAF8）。
-  static ThemeData _buildTheme(Brightness brightness) {
+  /// 种子色来自 Monet 当前主题，深浅模式由系统亮度决定。
+  static ThemeData _buildTheme(Brightness brightness, Color seed) {
     final scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF73CAF8),
+      seedColor: seed,
       brightness: brightness,
     );
     return ThemeData(
@@ -80,13 +96,6 @@ class ZhangShangZhaoYuanApp extends StatelessWidget {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: scheme.surfaceContainer,
-        indicatorColor: scheme.primaryContainer,
-        labelTextStyle: const WidgetStatePropertyAll(
-          TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-        ),
-      ),
     );
   }
 }
@@ -100,6 +109,11 @@ class RootShell extends StatefulWidget {
 }
 
 class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
+  /// 只给悬浮玻璃底栏使用；每个 RootShell 实例独占，销毁时释放快照。
+  final _backdrop = MiuixLayerBackdrop();
+
+  static const _titles = ['看板', '功能', '设置'];
+
   int _index = 0;
 
   final _dashKey = GlobalKey<DashboardPageState>();
@@ -124,6 +138,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _backdrop.dispose();
     super.dispose();
   }
 
@@ -153,39 +168,65 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // 输入法弹起时临时收掉底部留白，避免玻璃胶囊浮在键盘上方。
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final keyboardOpen = bottomInset > 0;
+
     return Scaffold(
-      body: IndexedStack(
-        index: _index,
-        children: [
-          DashboardPage(key: _dashKey),
-          const HomePage(),
-          const SettingsPage(),
-        ],
+      // 内容延伸到胶囊下方，玻璃才能采样到页面背景。
+      extendBody: true,
+      appBar: AppBar(title: AppBarBrandTitle(_titles[_index])),
+      body: MiuixLayerBackdropCapture(
+        backdrop: _backdrop,
+        child: ColoredBox(
+          color: MiuixTheme.of(context).colors.surface,
+          child: IndexedStack(
+            index: _index,
+            children: [
+              DashboardPage(key: _dashKey),
+              const HomePage(),
+              const SettingsPage(),
+            ],
+          ),
+        ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) {
-          setState(() => _index = i);
-          // 切到「看板」时刷新（导入课表、水电数据可能已变）
-          if (i == 0) _dashKey.currentState?.reload();
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.today_outlined),
-            selectedIcon: Icon(Icons.today),
-            label: '看板',
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 12,
+            top: 12,
+            right: 12,
+            bottom: keyboardOpen ? 0 : 12,
           ),
-          NavigationDestination(
-            icon: Icon(Icons.widgets_outlined),
-            selectedIcon: Icon(Icons.widgets),
-            label: '功能',
+          // 不要套 Center/Expanded：Scaffold 给底栏松约束，撑高后胶囊会离开底部。
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: MiuixGlassNavigationBar(
+              backdrop: _backdrop,
+              selectedIndex: _index,
+              onSelect: (i) {
+                setState(() => _index = i);
+                // 切到「看板」时刷新（导入课表、水电数据可能已变）
+                if (i == 0) _dashKey.currentState?.reload();
+              },
+              items: const [
+                MiuixGlassNavigationItem(
+                  icon: Icon(Icons.today_outlined),
+                  label: '看板',
+                ),
+                MiuixGlassNavigationItem(
+                  icon: Icon(Icons.widgets_outlined),
+                  label: '功能',
+                ),
+                MiuixGlassNavigationItem(
+                  icon: Icon(Icons.settings_outlined),
+                  label: '设置',
+                ),
+              ],
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: '设置',
-          ),
-        ],
+        ),
       ),
     );
   }

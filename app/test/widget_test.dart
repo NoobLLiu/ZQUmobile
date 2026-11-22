@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_miuix/miuix.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zhangshang_yanyuan/main.dart';
 import 'package:zhangshang_yanyuan/models/ai_source.dart';
@@ -53,7 +54,7 @@ void main() {
     await tester.pumpWidget(const ZhangShangZhaoYuanApp());
 
     // 底部导航应有三个目的地：看板 / 功能 / 设置
-    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byType(MiuixGlassNavigationBar), findsOneWidget);
     expect(find.text('看板'), findsOneWidget);
     expect(find.text('功能'), findsOneWidget);
     expect(find.text('设置'), findsOneWidget);
@@ -67,8 +68,7 @@ void main() {
     await tester.tap(find.text('功能'));
     await tester.pumpAndSettle();
 
-    // 可见的标题只有功能页的（看板页同名标题在 IndexedStack 里处于 offstage，
-    // 默认 finder 会跳过）
+    // 标题由 RootShell 统一渲染，IndexedStack 只切换正文
     expect(find.text('掌上砚园'), findsOneWidget);
     expect(find.textContaining('肇庆学院校园助手'), findsNothing);
     expect(find.text('课表已就绪'), findsNothing);
@@ -203,8 +203,7 @@ void main() {
     expect(notice, findsOneWidget);
   });
 
-  testWidgets('首次进入通知转写会弹出使用示例，之后不再打扰',
-      (WidgetTester tester) async {
+  testWidgets('首次进入通知转写会弹出使用示例，之后不再打扰', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
 
     await tester.pumpWidget(const MaterialApp(home: NoticeRewritePage()));
@@ -372,12 +371,10 @@ void main() {
   });
 
   testWidgets('看板页水电查不到时显示「未查到」并标感叹号', (WidgetTester tester) async {
-    addTearDown(
-      () => UtilityDataProvider.fetcher = UtilityService.fetchRooms,
-    );
+    addTearDown(() => UtilityDataProvider.fetcher = UtilityService.fetchRooms);
     // 缓存缺失，后台刷新必然失败且无缓存可回退 → 显示「未查到」
-    UtilityDataProvider.fetcher =
-        (studentId) async => throw UtilityException('该学号未绑定宿舍房间');
+    UtilityDataProvider.fetcher = (studentId) async =>
+        throw UtilityException('该学号未绑定宿舍房间');
     SharedPreferences.setMockInitialValues({
       'zsy_profile': _completeProfile,
       'zsy_notice_guide_seen': true,
@@ -392,12 +389,10 @@ void main() {
   });
 
   testWidgets('看板页刷新失败但有旧缓存时展示旧数据并标感叹号', (WidgetTester tester) async {
-    addTearDown(
-      () => UtilityDataProvider.fetcher = UtilityService.fetchRooms,
-    );
+    addTearDown(() => UtilityDataProvider.fetcher = UtilityService.fetchRooms);
     // 缓存已过期（13 小时前），后台刷新失败 → 回退旧缓存 + 感叹号
-    UtilityDataProvider.fetcher =
-        (studentId) async => throw UtilityException('连接超时，请稍后重试');
+    UtilityDataProvider.fetcher = (studentId) async =>
+        throw UtilityException('连接超时，请稍后重试');
     SharedPreferences.setMockInitialValues({
       'zsy_profile': _completeProfile,
       'zsy_notice_guide_seen': true,
